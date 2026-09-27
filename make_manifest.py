@@ -2,6 +2,7 @@
 import sys, uuid, pathlib
 
 base = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "https://localhost:3000"
+VER = sys.argv[2] if len(sys.argv) > 2 else "2"   # 改这个数字可强制 Office 重新加载面板（绕过缓存）
 ID = "5c1f7b8e-3a2d-4c6e-9b0f-7d2e4a1c8b93"   # 固定 ID，更新 manifest 时保持不变
 xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
@@ -10,7 +11,7 @@ xml = f"""<?xml version="1.0" encoding="UTF-8"?>
            xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
            xsi:type="TaskPaneApp">
   <Id>{ID}</Id>
-  <Version>1.0.0.0</Version>
+  <Version>1.0.{VER}.0</Version>
   <ProviderName>Xiaowu</ProviderName>
   <DefaultLocale>zh-CN</DefaultLocale>
   <DisplayName DefaultValue="think-cell 风格图表"/>
@@ -24,7 +25,7 @@ xml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <Host Name="Workbook"/>
   </Hosts>
   <DefaultSettings>
-    <SourceLocation DefaultValue="{base}/taskpane.html"/>
+    <SourceLocation DefaultValue="{base}/taskpane.html?v={VER}"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
@@ -71,7 +72,7 @@ xml = f"""<?xml version="1.0" encoding="UTF-8"?>
         <bt:Image id="Tc.I80" DefaultValue="{base}/assets/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="Tc.Url" DefaultValue="{base}/taskpane.html"/>
+        <bt:Url id="Tc.Url" DefaultValue="{base}/taskpane.html?v={VER}"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="Tc.Title" DefaultValue="think-cell 风格图表"/>
