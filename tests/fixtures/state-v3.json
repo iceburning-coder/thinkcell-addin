@@ -1,0 +1,34 @@
+{
+  "version": 3,
+  "chartId": "4eb927f0-c3fa-4ab8-a828-6c809ad19857",
+  "revision": 4,
+  "chart": {
+    "type": "waterfall",
+    "data": "Item\tValue\nStart\t10\nGrowth\t2\nEnd\te",
+    "title": "Current v3",
+    "subtitle": "USD million",
+    "source": "",
+    "theme": "consulting",
+    "dec": "",
+    "size": "680x400",
+    "legend": "auto",
+    "legendRev": false,
+    "mag": "1",
+    "opt": {},
+    "ann": {},
+    "colors": {},
+    "json": null
+  },
+  "link": {
+    "kind": "workbook-name",
+    "name": "TC_LINK_4EB927F0C3FA4AB8A8286C809AD19857",
+    "worksheetId": "sheet-42",
+    "sheet": "Data 2026",
+    "lastAddress": "'Data 2026'!$A$1:$B$4",
+    "status": "ok"
+  },
+  "meta": {
+    "hostName": "TC:4eb927f0-c3fa-4ab8-a828-6c809ad19857",
+    "hostRef": "xl:Data 2026:shape-1"
+  }
+}

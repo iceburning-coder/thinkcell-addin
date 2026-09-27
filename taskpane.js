@@ -5,7 +5,12 @@
 const $ = (id) => document.getElementById(id);
 let HOST = "web";           // ppt | xl | web
 let PY = null, API = null, PPTX_READY = false;
+let OFFICE_CAPS = TC.Office.getCapabilities(window.Office, HOST);
 let LAST = null;            // {spec, svg, width, height, meta}
+const UI_BUSY = TC.Office.createBusyTracker(() => refreshActionUi());
+const PREVIEW_FRESHNESS = TC.Office.createFreshnessTracker(() => refreshActionUi());
+let END_STARTUP_BUSY = null;
+const RENDER_LIFECYCLE = TC.State.createRenderLifecycle();
 let SEL_ADDRESS = null;     // Excel：读取选区的地址（原生图表用）
 let EDIT = null;            // 正在编辑的已插入图表 {name, id, slideId}
 let SEL_CHART = null;       // PowerPoint 当前选中的插件图表
@@ -148,7 +153,7 @@ function gridWire() {
 }
 
 // ---- 剪贴板：复制数据 / 复制整张图（PPT ↔ Excel 互通）
-const PAYLOAD = "TCCHART1:";
+const PAYLOAD = TC.State.PAYLOAD_PREFIX;
 function copyText(txt) {
   const fallback = () => {
     const ta = document.createElement("textarea"); ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0";
@@ -161,14 +166,14 @@ function copyText(txt) {
 }
 function chartPayload() {
   const st = panelState(); st.sel = null; st.src = HOST;
-  return PAYLOAD + btoa(unescape(encodeURIComponent(JSON.stringify(st))));
+  return TC.State.serializeClipboard(st);
 }
 function pasteChart(txt) {
   txt = String(txt || "").trim();
   if (!txt.startsWith(PAYLOAD)) return false;
   try {
-    const st = JSON.parse(decodeURIComponent(escape(atob(txt.slice(PAYLOAD.length)))));
-    if (!applyState(st)) throw new Error("格式不对");
+    const record = TC.State.parseClipboard(txt);
+    if (!applyState(record)) throw new Error("格式不对");
     SEL_ADDRESS = null; render();
     status(EDIT ? "已载入复制来的图表，点「更新所选图表」替换" : "已载入复制来的图表，可直接插入", "ok");
   } catch (e) { status("粘贴的图表无法识别：" + e.message, "bad"); }
@@ -636,7 +641,9 @@ function buildSpec(st) {
 }
 // 不动面板，按保存的图表状态直接出图（Excel 链接自动刷新用）
 function renderState(st) {
-  const spec = st.json ? JSON.parse(st.json) : buildSpec(st);
+  const record = TC.State.normalize(st, { mode: "read" });
+  const chart = record.chart;
+  const spec = chart.json ? TC.State.validateSpec(JSON.parse(chart.json)) : buildSpec(chart);
   return Object.assign({ spec }, JSON.parse(API.render(JSON.stringify(spec))));
 }
 
@@ -723,32 +730,83 @@ function themeWire() {
 }
 
 // ------------------------------------------------------------------ 渲染
-const schedule = debounce(render, 250);
+const renderLater = debounce(render, 250);
+function schedule() {
+  PREVIEW_FRESHNESS.invalidate();
+  refreshActionUi();
+  renderLater();
+}
 async function render(fromJson) {
-  $("dataErr").textContent = "";
-  let spec;
+  PREVIEW_FRESHNESS.invalidate();
+  const endBusy = UI_BUSY.begin();
   try {
-    if (fromJson === true) spec = JSON.parse($("json").value);
-    else if ($("jsonLock").checked) spec = JSON.parse($("json").value);
-    else { spec = buildSpec(); $("json").value = JSON.stringify(spec, null, 1); }
-  } catch (e) { $("dataErr").textContent = e.message; return; }
-  renderColors(spec);
-  saveState();
-  if (!API) return;
-  try {
-    const out = JSON.parse(API.render(JSON.stringify(spec)));
-    LAST = { spec, ...out };
-    $("preview").innerHTML = out.svg.replace(/width="[\d.]+" height="[\d.]+"/, 'width="100%"');
-    const m = (out.meta || []).map((x) => (x.annotation === "cagr" ? `CAGR ${(x.value * 100 >= 0 ? "+" : "")}${(x.value * 100).toFixed(1)}%`
-      : x.annotation === "diff" ? `差异 ${x.value}` : x.annotation === "value_line" ? `数值线 ${Number(x.value).toFixed(1)}` : "")).filter(Boolean);
-    $("meta").textContent = m.slice(0, 3).join(" · ") + (m.length > 3 ? " …" : "");
-    setBusy(false);
-  } catch (e) {
-    const msg = String(e.message || e).split("\n").filter((l) => l.trim()).slice(-1)[0];
-    $("dataErr").textContent = "生成失败：" + msg;
+    const renderId = RENDER_LIFECYCLE.start();
+    LAST = null;
+    $("dataErr").textContent = "";
+    $("meta").textContent = "";
+    $("preview").textContent = "";
+    let spec;
+    try {
+      if (fromJson === true) spec = TC.State.validateSpec(JSON.parse($("json").value));
+      else if ($("jsonLock").checked) spec = TC.State.validateSpec(JSON.parse($("json").value));
+      else { spec = buildSpec(); $("json").value = JSON.stringify(spec, null, 1); }
+    } catch (e) {
+      RENDER_LIFECYCLE.fail(renderId);
+      $("dataErr").textContent = e.userMessage || e.message;
+      return;
+    }
+    try { renderColors(spec); saveState(); }
+    catch (e) {
+      RENDER_LIFECYCLE.fail(renderId);
+      $("dataErr").textContent = e.userMessage || e.message;
+      return;
+    }
+    if (!API) return;
+    try {
+      const out = JSON.parse(API.render(JSON.stringify(spec)));
+      if (out.error) throw new TC.State.TCError(out.error.code || "TC_ENGINE_RENDER_FAILED", out.error.message || "图表生成失败");
+      const safeSvg = TC.State.sanitizeSvg(out.svg);
+      const snapshot = { spec, ...out };
+      if (!RENDER_LIFECYCLE.publish(renderId, snapshot)) return;
+      LAST = RENDER_LIFECYCLE.current();
+      PREVIEW_FRESHNESS.publish();
+      safeSvg.setAttribute("width", "100%");
+      safeSvg.removeAttribute("height");
+      $("preview").replaceChildren(document.importNode(safeSvg, true));
+      const m = (out.meta || []).map((x) => (x.annotation === "cagr" ? `CAGR ${(x.value * 100 >= 0 ? "+" : "")}${(x.value * 100).toFixed(1)}%`
+        : x.annotation === "diff" ? `差异 ${x.value}` : x.annotation === "value_line" ? `数值线 ${Number(x.value).toFixed(1)}` : "")).filter(Boolean);
+      $("meta").textContent = m.slice(0, 3).join(" · ") + (m.length > 3 ? " …" : "");
+    } catch (e) {
+      if (!RENDER_LIFECYCLE.isCurrent(renderId)) return;
+      RENDER_LIFECYCLE.fail(renderId);
+      LAST = null;
+      const msg = String(e.message || e).split("\n").filter((l) => l.trim()).slice(-1)[0];
+      $("dataErr").textContent = "生成失败：" + msg;
+    }
+  } finally {
+    endBusy();
   }
 }
-function setBusy(b) { document.querySelectorAll(".actions button").forEach((x) => { x.disabled = b || !LAST; }); }
+function applyCapabilityUi() {
+  const gates = [
+    ["btnSlide", "powerPointSlides", "当前 PowerPoint 版本不支持插入可编辑幻灯片", true],
+    ["btnLoadSel", "powerPointSelection", "当前 PowerPoint 版本不支持识别所选形状", false],
+    ["btnUpdate", "powerPointSelection", "当前 PowerPoint 版本不支持原位编辑图表", true],
+  ];
+  gates.forEach(([id, capability, reason, requiresChart]) => {
+    const element = $(id); if (!element) return;
+    const gate = TC.Office.capabilityGate(OFFICE_CAPS, capability, {
+      reason, requiresChart, busy: UI_BUSY.isBusy(), hasChart: chartReady(),
+    });
+    element.disabled = gate.disabled; element.title = gate.title;
+  });
+}
+function chartReady() { return !!LAST && PREVIEW_FRESHNESS.isFresh(); }
+function refreshActionUi() {
+  const busy = UI_BUSY.isBusy();
+  document.querySelectorAll(".actions button").forEach((x) => { x.disabled = busy || !chartReady(); });
+  applyCapabilityUi();
+}
 
 // ------------------------------------------------------------------ Pyodide
 async function initPy() {
@@ -756,13 +814,15 @@ async function initPy() {
     $("loadmsg").textContent = "正在加载 Python 运行环境…";
     PY = await loadPyodide({ indexURL: new URL("pyodide/", location.href).href });
     $("loadmsg").textContent = "正在加载图表引擎…";
-    const buf = await (await fetch("py/pylib.zip")).arrayBuffer();
+    const buf = await (await fetch("py/pylib.zip?v=6")).arrayBuffer();
     PY.unpackArchive(buf, "zip", { extractDir: "/lib/tc" });
     PY.runPython("import sys; sys.path.insert(0, '/lib/tc'); import addin_api");
     API = PY.pyimport("addin_api");
     $("loading").classList.add("hide");
+    if (END_STARTUP_BUSY) { END_STARTUP_BUSY(); END_STARTUP_BUSY = null; }
     render();
   } catch (e) {
+    if (END_STARTUP_BUSY) { END_STARTUP_BUSY(); END_STARTUP_BUSY = null; }
     $("loadmsg").textContent = "引擎加载失败：" + (e.message || e);
   }
 }
@@ -788,107 +848,278 @@ async function pptxB64(name) { await ensurePptx(); const r = $("slideRatio") ? $
 function b64ToBlob(b64, type) { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type }); }
 
 // ------------------------------------------------------------------ Office：PowerPoint
-function svgForOffice() { return LAST.svg; }
+function svgForOffice(output) { return (output || LAST).svg; }
 function setSelectedAsync(data, opts) {
-  return new Promise((res, rej) => Office.context.document.setSelectedDataAsync(data, opts, (r) => (r.status === Office.AsyncResultStatus.Succeeded ? res() : rej(r.error))));
+  return TC.Office.fromAsyncResult((callback) => Office.context.document.setSelectedDataAsync(data, opts, callback), Office);
 }
-// ---- 文档内存储：每张插件图表的面板设置存进文档 settings（随文件走），键 = 形状名
+function pptRun(callback) { return TC.Office.runPowerPoint(window.PowerPoint, callback); }
+function xlRun(callback) { return TC.Office.runExcel(window.Excel, callback); }
+function requireCapability(name, message) {
+  if (!OFFICE_CAPS[name]) { const error = new Error(message); error.code = "TC_OFFICE_UNSUPPORTED"; throw error; }
+}
+// ---- 文档内存储：v3 以稳定 chartId 为键；旧的形状名记录只读兼容，成功保存后增量迁移
 function docSettings() { try { return Office.context.document.settings; } catch (e) { return null; } }
-function chartIndex() { const st = docSettings(); return (st && st.get("TC:index")) || []; }
-function saveChartState(name, state) {
-  const st = docSettings(); if (!st) return Promise.resolve();
-  st.set(name, state);
-  const idx = chartIndex(); if (!idx.includes(name)) { idx.push(name); st.set("TC:index", idx); }
-  return new Promise((res) => st.saveAsync(() => res()));
+let DOC_STORE = null, DOC_STORE_SETTINGS = null;
+function documentStore() {
+  const settings = docSettings();
+  if (!settings) return null;
+  if (!DOC_STORE || DOC_STORE_SETTINGS !== settings) {
+    DOC_STORE_SETTINGS = settings;
+    DOC_STORE = TC.Store.create(settings, { state: TC.State, office: window.Office });
+  }
+  return DOC_STORE;
 }
-function getChartState(name) { const st = docSettings(); return st ? st.get(name) : null; }
-function newChartName() { return PREFIX + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function getChartRecord(name, chartId) {
+  const store = documentStore(); if (!store) return null;
+  try {
+    if (chartId) {
+      const direct = store.load(chartId);
+      if (direct) return direct;
+    }
+    const matches = store.classifyRecords().records
+      .map((entry) => entry.record)
+      .filter((record) => record && record.meta && record.meta.hostName === name)
+      .sort((a, b) => b.revision - a.revision);
+    return matches[0] || store.loadLegacy(name);
+  } catch (e) { console.error("Invalid stored chart record", e); return null; }
+}
+function chartIndex() {
+  const store = documentStore(); if (!store) return [];
+  try {
+    const classified = store.classifyRecords();
+    const current = classified.records.map((entry) => entry.record && entry.record.meta && entry.record.meta.hostName).filter(Boolean);
+    return [...new Set(current.concat(classified.legacyNames || []))];
+  } catch (e) { console.error("Invalid chart index", e); return []; }
+}
+async function saveChartState(name, state) {
+  const store = documentStore();
+  if (!store) throw new Error("当前文档不支持保存图表状态");
+  const existing = getChartRecord(name, state && state.chartId);
+  const record = prepareChartRecord(state, existing, name);
+  return store.save(record);
+}
+function prepareChartRecord(state, existing, hostName) {
+  const record = TC.State.normalize(state, { mode: "write" });
+  record.chartId = record.chartId || (existing && existing.chartId) || TC.State.createChartId();
+  record.revision = Math.max(record.revision || 0, (existing && existing.revision) || 0) + 1;
+  record.meta = Object.assign({}, (existing && existing.meta) || {}, record.meta || {});
+  if (hostName) record.meta.hostName = hostName;
+  if (existing && !existing.chartId && hostName) record.meta.legacyKey = hostName;
+  return record;
+}
+function operationToken() { return `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
+async function runChartOperation(record, kind, operation) {
+  const store = documentStore(); if (!store) throw new Error("当前文档不支持保存图表状态");
+  const token = operationToken();
+  await store.beginPending({ chartId: record.chartId, revision: record.revision, kind, token });
+  try {
+    const result = await operation(token);
+    await store.clearPending(record.chartId);
+    return result;
+  } catch (error) {
+    if (!error.persisted) {
+      try { await store.clearPending(record.chartId); } catch (clearError) { error.pendingClearError = clearError; }
+    }
+    throw error;
+  }
+}
+function flattenChartRecord(record) {
+  if (!record || !record.chart) return null;
+  const flat = Object.assign({}, record.chart);
+  if (record.link) flat.link = typeof record.link === "string" ? record.link : (record.link.address || record.link.lastAddress || null);
+  flat.sheet = (record.link && record.link.sheet) || (record.meta && record.meta.sheet) || null;
+  return flat;
+}
+function getChartState(name, chartId) {
+  return flattenChartRecord(getChartRecord(name, chartId));
+}
+function newChartName(chartId) { return chartId ? PREFIX + chartId : PREFIX + TC.State.createChartId(); }
 function fitBox(frame, W, H) {
   let w = frame.width, h = w * H / W;
   if (h > frame.height) { h = frame.height; w = h * W / H; }
   return { left: frame.left + (frame.width - w) / 2, top: frame.top + (frame.height - h) / 2, width: w, height: h };
 }
-async function pptSnapshot(ctx) {
-  const sl = ctx.presentation.getSelectedSlides(); sl.load("items/id"); await ctx.sync();
-  if (!sl.items.length) throw new Error("请先在左侧选中一张幻灯片");
-  const slide = sl.items[0];
-  slide.shapes.load("items/id"); await ctx.sync();
-  return { slide, ids: new Set(slide.shapes.items.map((x) => x.id)) };
+async function pptInsertAt(box, output) {
+  const chart = output || TC.Office.captureChartOutput(LAST);
+  const opts = { imageLeft: box.left, imageTop: box.top, imageWidth: box.width, imageHeight: box.height };
+  if (OFFICE_CAPS.svgInsertion) {
+    try {
+      await setSelectedAsync(svgForOffice(chart), Object.assign({ coercionType: Office.CoercionType.XmlSvg }, opts));
+      return true;
+    } catch (e) { /* 当前主机可能声明支持但拒绝具体 SVG，继续回退 PNG */ }
+  }
+  const png = await svgToPngDataUrl(chart.svg, chart.width, chart.height, 3);
+  await setSelectedAsync(png.split(",")[1], Object.assign({ coercionType: Office.CoercionType.Image }, opts));
+  return false;
 }
-async function pptTagNew(snap, name) {
-  // 找到刚插入的形状并命名、打标签
-  return PowerPoint.run(async (ctx) => {
-    const slide = ctx.presentation.slides.getItem(snap.slide.id);
-    slide.shapes.load("items/id,items/name"); await ctx.sync();
-    const added = slide.shapes.items.filter((x) => !snap.ids.has(x.id));
-    const shp = added[added.length - 1];
-    if (!shp) return null;
-    shp.name = name;
-    try { shp.tags.add("TCCHART", "1"); } catch (e) { /* 旧版本无 tags */ }
+async function pptInsertionSnapshot() {
+  return pptRun(async (ctx) => {
+    const selectedSlides = ctx.presentation.getSelectedSlides();
+    selectedSlides.load("items/id"); await ctx.sync();
+    if (!selectedSlides.items.length) throw new Error("请先在左侧选中一张幻灯片");
+    const slide = selectedSlides.items[0];
+    slide.shapes.load("items/id");
+    const selectedShapes = ctx.presentation.getSelectedShapes();
+    selectedShapes.load("items/id,items/name,items/left,items/top,items/width,items/height");
     await ctx.sync();
-    return shp.id;
+    const prepared = { slideId: slide.id, beforeIds: new Set(slide.shapes.items.map((shape) => shape.id)), oldId: null, frame: null };
+    if (selectedShapes.items.length !== 1 || String(selectedShapes.items[0].name).startsWith(PREFIX)) return prepared;
+    const shape = selectedShapes.items[0];
+    prepared.frame = { left: shape.left, top: shape.top, width: shape.width, height: shape.height };
+    try {
+      const textFrame = shape.textFrame;
+      textFrame.load("hasText"); await ctx.sync();
+      if (!textFrame.hasText) prepared.oldId = shape.id;
+    } catch (e) { /* 图片等无文本框：保留原形状，仅借用位置 */ }
+    return prepared;
   });
 }
-async function pptInsertAt(box) {
-  const opts = { imageLeft: box.left, imageTop: box.top, imageWidth: box.width, imageHeight: box.height };
-  try {
-    await setSelectedAsync(svgForOffice(), Object.assign({ coercionType: Office.CoercionType.XmlSvg }, opts));
-    return true;
-  } catch (e) {
-    const png = await svgToPngDataUrl(LAST.svg, LAST.width, LAST.height, 3);
-    await setSelectedAsync(png.split(",")[1], Object.assign({ coercionType: Office.CoercionType.Image }, opts));
-    return false;
-  }
+async function pptUpdateSnapshot(edit, output) {
+  return pptRun(async (ctx) => {
+    const slide = ctx.presentation.slides.getItem(edit.slideId);
+    const old = slide.shapes.getItem(edit.id);
+    old.load("left,top,width,height");
+    slide.shapes.load("items/id"); await ctx.sync();
+    return {
+      slideId: edit.slideId,
+      oldId: edit.id,
+      beforeIds: new Set(slide.shapes.items.map((shape) => shape.id)),
+      frame: { left: old.left, top: old.top, width: old.width, height: old.height },
+      box: { left: old.left, top: old.top, width: old.width, height: old.width * output.height / output.width },
+    };
+  });
+}
+function pptReplacementAdapter(snapshot, name, record, token, output) {
+  return {
+    snapshot,
+    async insert(prepared) {
+      const box = prepared.box || (prepared.frame
+        ? fitBox(prepared.frame, output.width, output.height)
+        : { left: 40, top: 40, width: 640, height: 640 * output.height / output.width });
+      prepared.box = box;
+      prepared.svgOk = await pptInsertAt(box, output);
+    },
+    async identify(prepared) {
+      return pptRun(async (ctx) => {
+        const slide = ctx.presentation.slides.getItem(prepared.slideId);
+        slide.shapes.load("items/id");
+        let selected = null;
+        let selectedSlides = null;
+        if (OFFICE_CAPS.powerPointSelection) {
+          selected = ctx.presentation.getSelectedShapes(); selected.load("items/id");
+          selectedSlides = ctx.presentation.getSelectedSlides(); selectedSlides.load("items/id");
+        }
+        await ctx.sync();
+        const selectedIds = TC.Office.selectedShapeIdsOnSlide(
+          prepared.slideId,
+          selectedSlides ? selectedSlides.items.map((item) => item.id) : [],
+          selected ? selected.items.map((shape) => shape.id) : [],
+        );
+        const id = TC.Office.resolveInsertedShapeId(
+          prepared.beforeIds,
+          slide.shapes.items.map((shape) => shape.id),
+          selectedIds,
+        );
+        return { id };
+      });
+    },
+    async persist(prepared, pending) {
+      record.meta = Object.assign({}, record.meta, { hostName: name, hostRef: `ppt:${prepared.slideId}:${pending.id}` });
+      await documentStore().save(record);
+    },
+    async renameAndTag(prepared, pending) {
+      await pptRun(async (ctx) => {
+        const shape = ctx.presentation.slides.getItem(prepared.slideId).shapes.getItem(pending.id);
+        shape.name = name;
+        try {
+          shape.tags.add("TCCHART", "3");
+          shape.tags.add("TC_CHART_ID", record.chartId);
+          shape.tags.add("TC_REVISION", String(record.revision));
+        } catch (e) { /* 旧版本无 tags，名称仍可作为降级标识 */ }
+        await ctx.sync();
+      });
+    },
+    async deleteOld(prepared) {
+      if (!prepared.oldId) return;
+      await pptRun(async (ctx) => {
+        ctx.presentation.slides.getItem(prepared.slideId).shapes.getItem(prepared.oldId).delete();
+        await ctx.sync();
+      });
+    },
+    async cleanupPending(prepared, pending) {
+      await pptRun(async (ctx) => {
+        const slide = ctx.presentation.slides.getItem(prepared.slideId);
+        let id = pending && pending.id;
+        if (!id) {
+          slide.shapes.load("items/id"); await ctx.sync();
+          id = TC.Office.resolveInsertedShapeId(prepared.beforeIds, slide.shapes.items.map((shape) => shape.id), []);
+        }
+        slide.shapes.getItem(id).delete(); await ctx.sync();
+      });
+    },
+  };
 }
 async function pptInsertSvg() {
-  let frame = null, delId = null, snap = null;
-  await PowerPoint.run(async (ctx) => {
-    snap = await pptSnapshot(ctx);
-    try {   // 选中了一个普通形状/占位符 → 图放进它的位置；若它是空的，顺便替换掉
-      const sel = ctx.presentation.getSelectedShapes();
-      sel.load("items/id,items/name,items/left,items/top,items/width,items/height"); await ctx.sync();
-      if (sel.items.length === 1 && !String(sel.items[0].name).startsWith(PREFIX)) {
-        const x = sel.items[0];
-        frame = { left: x.left, top: x.top, width: x.width, height: x.height };
-        try { const tf = x.textFrame; tf.load("hasText"); await ctx.sync(); if (!tf.hasText) delId = x.id; } catch (e) { /* 图片等无文本框 */ }
-        if (delId) { x.delete(); await ctx.sync(); snap.ids.delete(delId); }
-      }
-    } catch (e) { /* 低版本不支持 getSelectedShapes */ }
-  });
-  const box = frame ? fitBox(frame, LAST.width, LAST.height) : { left: 40, top: 40, width: 640, height: 640 * LAST.height / LAST.width };
-  const svgOk = await pptInsertAt(box);
-  const name = newChartName();
-  const id = await pptTagNew(snap, name);
-  if (id) await saveChartState(name, panelState());
-  const where = frame ? (delId ? "已替换所选占位符" : "已放入所选形状的位置") : "已插入";
-  return `${where}${svgOk ? "" : "（为图片，此版本不支持 SVG）"}。以后选中它可「载入编辑」`;
+  const output = TC.Office.captureChartOutput(LAST);
+  if (!OFFICE_CAPS.powerPointSelection || !OFFICE_CAPS.powerPointShapes) {
+    const svgOk = await pptInsertAt({ left: 40, top: 40, width: 640, height: 640 * output.height / output.width }, output);
+    return `已插入${svgOk ? "" : " PNG"}。当前 PowerPoint 版本不支持形状标记，因此本图不能从面板重新载入编辑`;
+  }
+  const record = prepareChartRecord(panelState(), null);
+  const name = newChartName(record.chartId); record.meta.hostName = name;
+  try {
+    const result = await runChartOperation(record, "ppt-insert", (token) => TC.Office.replacePowerPointChart(
+      pptReplacementAdapter(pptInsertionSnapshot, name, record, token, output),
+    ));
+    const prepared = result.prepared;
+    const where = prepared.frame ? (prepared.oldId ? "已替换所选占位符" : "已放入所选形状的位置") : "已插入";
+    return `${where}${prepared.svgOk ? "" : "（为图片，此版本不支持 SVG）"}。以后选中它可「载入编辑」`;
+  } catch (error) {
+    if (error.recoverableDuplicate) error.message += "；旧图与新图均保留，请确认新图后手动删除旧图";
+    throw error;
+  }
 }
 async function pptInsertSlide() {
-  const name = newChartName();
+  requireCapability("powerPointSlides", "当前 PowerPoint 版本不支持插入可编辑幻灯片");
+  const record = prepareChartRecord(panelState(), null);
+  const name = newChartName(record.chartId); record.meta.hostName = name;
   const b64 = await pptxB64(name);
-  await PowerPoint.run(async (ctx) => {
-    const sel = ctx.presentation.getSelectedSlides();
-    sel.load("items/id");
-    await ctx.sync();
+  await pptRun(async (ctx) => {
     const opt = { formatting: "KeepSourceFormatting" };
-    if (sel.items.length) opt.targetSlideId = sel.items[sel.items.length - 1].id;
+    if (OFFICE_CAPS.powerPointSelection) {
+      const sel = ctx.presentation.getSelectedSlides();
+      sel.load("items/id");
+      await ctx.sync();
+      if (sel.items.length) opt.targetSlideId = sel.items[sel.items.length - 1].id;
+    }
     ctx.presentation.insertSlidesFromBase64(b64, opt);
     await ctx.sync();
   });
-  await saveChartState(name, panelState());
+  await documentStore().save(record);
   return "已作为新幻灯片插入（全部为可编辑形状）";
 }
 // ---- 选中图表 → 载入编辑 → 更新
 async function pptSelectionChanged() {
-  if (HOST !== "ppt") return;
+  if (HOST !== "ppt" || !OFFICE_CAPS.powerPointSelection) { SEL_CHART = null; showBanner(); return; }
   try {
-    await PowerPoint.run(async (ctx) => {
+    await pptRun(async (ctx) => {
       const sel = ctx.presentation.getSelectedShapes();
       sel.load("items/id,items/name"); await ctx.sync();
       const sl = ctx.presentation.getSelectedSlides(); sl.load("items/id"); await ctx.sync();
       const x = sel.items.length === 1 ? sel.items[0] : null;
-      SEL_CHART = x && String(x.name).startsWith(PREFIX) && getChartState(x.name)
-        ? { id: x.id, name: x.name, slideId: sl.items[0] && sl.items[0].id } : null;
+      let identity = null;
+      if (x) {
+        const tags = {};
+        try {
+          x.tags.load("items/key,items/value"); await ctx.sync();
+          x.tags.items.forEach((tag) => { tags[tag.key] = tag.value; });
+        } catch (e) { /* 名称降级 */ }
+        identity = TC.Office.powerPointIdentity(tags, x.name);
+      }
+      const record = x ? getChartRecord(x.name, identity && identity.chartId) : null;
+      SEL_CHART = x && record
+        ? { id: x.id, name: x.name, chartId: record.chartId, revision: record.revision, slideId: sl.items[0] && sl.items[0].id,
+          hostRef: `ppt:${sl.items[0] && sl.items[0].id}:${x.id}` } : null;
     });
   } catch (e) { SEL_CHART = null; }
   showBanner();
@@ -900,7 +1131,7 @@ function showBanner() {
     $("editMsg").textContent = "正在编辑：" + (EDIT.title || "图表") + "（改完点「更新所选图表」）";
     $("btnLoadSel").classList.add("hide"); $("btnNewChart").classList.remove("hide");
   } else if (SEL_CHART) {
-    const st = getChartState(SEL_CHART.name) || {};
+    const st = getChartState(SEL_CHART.name, SEL_CHART.chartId) || {};
     b.classList.remove("hide", "editing");
     $("editMsg").textContent = "已选中图表：" + (st.title || "未命名");
     $("btnLoadSel").classList.remove("hide"); $("btnNewChart").classList.add("hide");
@@ -908,9 +1139,11 @@ function showBanner() {
   $("btnUpdate").classList.toggle("hide", !EDIT || HOST !== "ppt");
   $("btnUpdateXl").classList.toggle("hide", !EDIT || HOST !== "xl");
 }
-function loadSelectedChart() {
+async function loadSelectedChart() {
   if (!SEL_CHART) return;
-  const st = getChartState(SEL_CHART.name);
+  const forked = await ensureUniqueIdentityForEdit(SEL_CHART.hostRef);
+  if (forked) Object.assign(SEL_CHART, { name: forked.name, chartId: forked.record.chartId, revision: forked.record.revision });
+  const st = getChartState(SEL_CHART.name, SEL_CHART.chartId);
   if (!st) return;
   EDIT = Object.assign({}, SEL_CHART, { title: st.title });
   applyState(st); render(); showBanner();
@@ -923,69 +1156,163 @@ function endEdit(restore) {
 }
 async function pptUpdate() {
   if (!EDIT) throw new Error("没有正在编辑的图表");
-  let old = null, snap = null;
-  await PowerPoint.run(async (ctx) => {
-    const slide = ctx.presentation.slides.getItem(EDIT.slideId);
-    const shp = slide.shapes.getItem(EDIT.id);
-    shp.load("left,top,width,height"); await ctx.sync();
-    old = { left: shp.left, top: shp.top, width: shp.width, height: shp.height };
-    shp.delete(); await ctx.sync();
-    slide.shapes.load("items/id"); await ctx.sync();
-    snap = { slide: { id: EDIT.slideId }, ids: new Set(slide.shapes.items.map((x) => x.id)) };
-  });
-  const box = { left: old.left, top: old.top, width: old.width, height: old.width * LAST.height / LAST.width };
-  await pptInsertAt(box);
-  const id = await pptTagNew(snap, EDIT.name);
-  await saveChartState(EDIT.name, panelState());
-  EDIT.id = id; EDIT.title = $("title").value;
+  requireCapability("powerPointSelection", "当前 PowerPoint 版本不支持原位编辑图表");
+  const existing = getChartRecord(EDIT.name, EDIT.chartId);
+  if (!existing) throw new Error("找不到该图表的文档状态");
+  const record = prepareChartRecord(panelState(), existing, EDIT.name);
+  const name = newChartName(record.chartId); record.meta.hostName = name;
+  const output = TC.Office.captureChartOutput(LAST);
+  const edit = Object.assign({}, EDIT);
+  let result;
+  try {
+    result = await runChartOperation(record, "ppt-update", (token) => TC.Office.replacePowerPointChart(pptReplacementAdapter(
+      () => pptUpdateSnapshot(edit, output), name, record, token, output,
+    )));
+  } catch (error) {
+    if (error.recoverableDuplicate) error.message += "；旧图与新图均保留，请确认新图后手动删除旧图";
+    throw error;
+  }
+  EDIT.id = result.pending.id; EDIT.name = name; EDIT.chartId = record.chartId; EDIT.revision = record.revision; EDIT.title = $("title").value;
   showBanner();
   return "已在原位置更新（宽度保持不变）";
 }
 
 // ------------------------------------------------------------------ Office：Excel
-function xlAddSvgShape(sh, out) {
-  try { return sh.shapes.addSvg(out.svg); } catch (e) { return null; }
+function xlPendingName() { return `TC_PENDING_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`; }
+function xlSheet(ctx, name) { return name ? ctx.workbook.worksheets.getItem(name) : ctx.workbook.worksheets.getActiveWorksheet(); }
+function xlConfigureImage(shape, prepared, out, pendingName, altText) {
+  shape.lockAspectRatio = true;
+  shape.left = prepared.left; shape.top = prepared.top; shape.width = prepared.width;
+  shape.name = pendingName;
+  try { shape.altTextDescription = altText; } catch (e) { /* 旧版主机仅保留名称标识 */ }
+  try { shape.load("id"); } catch (e) { /* 旧版主机无稳定 shape id */ }
+}
+function xlReplacementAdapter(snapshot, name, out, record, token) {
+  const pendingName = xlPendingName();
+  let pngPromise = null;
+  const pendingAlt = TC.Office.encodeExcelIdentity({ chartId: record.chartId, revision: record.revision, pendingToken: token, title: record.chart.title || "" });
+  const finalAlt = TC.Office.encodeExcelIdentity({ chartId: record.chartId, revision: record.revision, title: record.chart.title || "" });
+  return {
+    snapshot,
+    async insertSvg(prepared) {
+      if (!OFFICE_CAPS.excelSvg) throw new Error("当前 Excel 版本不支持 SVG 形状");
+      return xlRun(async (ctx) => {
+        const sh = xlSheet(ctx, prepared.sheet);
+        if (!sh.shapes || typeof sh.shapes.addSvg !== "function") throw new Error("当前 Excel 主机未提供 addSvg");
+        const shape = sh.shapes.addSvg(out.svg);
+        xlConfigureImage(shape, prepared, out, pendingName, pendingAlt);
+        await ctx.sync();
+        return { name: pendingName, id: shape.id || pendingName };
+      });
+    },
+    async cleanupFailedSvg(prepared) {
+      await xlRun(async (ctx) => {
+        const sh = xlSheet(ctx, prepared.sheet);
+        sh.shapes.load("items/name"); await ctx.sync();
+        const shape = sh.shapes.items.find((item) => item.name === pendingName);
+        if (shape) { shape.delete(); await ctx.sync(); }
+      });
+    },
+    async insertPng(prepared) {
+      if (!pngPromise) pngPromise = svgToPngDataUrl(out.svg, out.width, out.height, 3);
+      const png = await pngPromise;
+      return xlRun(async (ctx) => {
+        const sh = xlSheet(ctx, prepared.sheet);
+        const shape = sh.shapes.addImage(png.split(",")[1]);
+        xlConfigureImage(shape, prepared, out, pendingName, pendingAlt);
+        await ctx.sync();
+        return { name: pendingName, id: shape.id || pendingName };
+      });
+    },
+    async persist(prepared, pending) {
+      if (record.link) record.link = await xlEnsureNamedLink(record);
+      record.meta = Object.assign({}, record.meta, { sheet: prepared.sheet, hostName: name, hostRef: `xl:${prepared.sheet}:${pending.id}` });
+      await documentStore().save(record);
+    },
+    async rename(prepared, pending) {
+      await xlRun(async (ctx) => {
+        const sh = xlSheet(ctx, prepared.sheet);
+        if (prepared.oldName) {
+          const old = sh.shapes.getItem(prepared.oldName);
+          old.name = prepared.backupName;
+        }
+        const inserted = sh.shapes.getItem(pending.name);
+        inserted.name = name;
+        try { inserted.altTextDescription = finalAlt; } catch (e) { /* 名称降级 */ }
+        await ctx.sync();
+      });
+    },
+    async deleteOld(prepared) {
+      if (!prepared.oldName) return;
+      await xlRun(async (ctx) => {
+        xlSheet(ctx, prepared.sheet).shapes.getItem(prepared.backupName).delete();
+        await ctx.sync();
+      });
+    },
+    async cleanupPending(prepared, pending) {
+      await xlRun(async (ctx) => {
+        const sh = xlSheet(ctx, prepared.sheet);
+        sh.shapes.load("items/name"); await ctx.sync();
+        const targetName = pending && pending.name ? pending.name : pendingName;
+        const shape = sh.shapes.items.find((item) => item.name === targetName);
+        if (shape) { shape.delete(); await ctx.sync(); }
+      });
+    },
+  };
+}
+async function xlNewSnapshot() {
+  return xlRun(async (ctx) => {
+    const sh = ctx.workbook.worksheets.getActiveWorksheet(); sh.load("name");
+    const range = ctx.workbook.getSelectedRange(); range.load("left,top,width");
+    await ctx.sync();
+    return { sheet: sh.name, oldName: null, left: range.left + range.width + 12, top: range.top, width: 560 };
+  });
+}
+async function xlExistingSnapshot(name, sheet) {
+  return xlRun(async (ctx) => {
+    const sh = xlSheet(ctx, sheet); sh.load("name");
+    const old = sh.shapes.getItem(name); old.load("left,top,width"); await ctx.sync();
+    return {
+      sheet: sh.name, oldName: name, backupName: `${xlPendingName()}_OLD`,
+      left: old.left, top: old.top, width: old.width,
+    };
+  });
+}
+async function xlRunReplacement(adapter) {
+  try { return await TC.Office.replaceExcelChart(adapter); }
+  catch (error) {
+    if (error.recoverableDuplicate) error.message += "；旧图与新图均保留，请确认新图后手动删除旧图";
+    throw error;
+  }
 }
 async function xlInsertSvg() {
-  const wPx = 560, name = newChartName();
-  let sheetName = "";
-  await Excel.run(async (ctx) => {
-    const sh = ctx.workbook.worksheets.getActiveWorksheet(); sh.load("name");
-    const r = ctx.workbook.getSelectedRange(); r.load("left,top,width");
-    await ctx.sync();
-    sheetName = sh.name;
-    let shp = xlAddSvgShape(sh, LAST);
-    if (!shp) { const png = await svgToPngDataUrl(LAST.svg, LAST.width, LAST.height, 3); shp = sh.shapes.addImage(png.split(",")[1]); }
-    shp.lockAspectRatio = true;
-    shp.left = r.left + r.width + 12; shp.top = r.top; shp.width = wPx;
-    shp.name = name;
-    try { shp.altTextDescription = LAST.spec.title || "think-cell 风格图表"; } catch (e) { /* 忽略 */ }
-    await ctx.sync();
-  });
-  const st = panelState(); st.sheet = sheetName;
-  if (SEL_ADDRESS) st.link = SEL_ADDRESS;
-  await saveChartState(name, st);
+  const state = panelState(); if (SEL_ADDRESS) state.link = SEL_ADDRESS;
+  const record = prepareChartRecord(state, null);
+  const name = newChartName(record.chartId); record.meta.hostName = name;
+  const result = await runChartOperation(record, "xl-insert", (token) => xlRunReplacement(
+    xlReplacementAdapter(xlNewSnapshot, name, LAST, record, token),
+  ));
   await xlRefreshList(name);
-  return st.link ? `已插入，并与 ${st.link} 链接：改这些单元格，图会自动更新` : "已插入到选区右侧。想让图跟着单元格变：先「读取选区」或「数据写入单元格」再插入";
+  const fallback = result.format === "png" ? "（SVG 不可用，已回退为 PNG）" : "";
+  return state.link
+    ? `已插入${fallback}，并与 ${state.link} 链接：改这些单元格，图会自动更新`
+    : `已插入到选区右侧${fallback}。想让图跟着单元格变：先“读取选区”或“数据写入单元格”再插入`;
 }
-// 按形状名替换图片（位置、宽度不变）
-async function xlReplaceShape(name, out, sheet) {
-  await Excel.run(async (ctx) => {
-    const sh = sheet ? ctx.workbook.worksheets.getItem(sheet) : ctx.workbook.worksheets.getActiveWorksheet();
-    const old = sh.shapes.getItem(name); old.load("left,top,width"); await ctx.sync();
-    const L = old.left, Tp = old.top, Wd = old.width;
-    old.delete();
-    let shp = xlAddSvgShape(sh, out);
-    if (!shp) { const png = await svgToPngDataUrl(out.svg, out.width, out.height, 3); shp = sh.shapes.addImage(png.split(",")[1]); }
-    shp.lockAspectRatio = true; shp.left = L; shp.top = Tp; shp.width = Wd; shp.name = name;
-    await ctx.sync();
-  });
+// 按形状名事务式替换图片（位置、宽度不变）
+async function xlReplaceShape(name, out, sheet, state, chartId, linkRecord) {
+  const existing = getChartRecord(name, chartId);
+  if (!existing) throw new Error("找不到该图表的文档状态");
+  const record = prepareChartRecord(state, existing, name);
+  if (linkRecord !== undefined) record.link = linkRecord;
+  const finalName = newChartName(record.chartId); record.meta.hostName = finalName;
+  const result = await runChartOperation(record, "xl-update", (token) => xlRunReplacement(
+    xlReplacementAdapter(() => xlExistingSnapshot(name, sheet), finalName, out, record, token),
+  ));
+  return { result, record, name: finalName };
 }
 // ---- 单元格 ↔ 图表 链接
 function splitAddr(a) {
-  const i = String(a).lastIndexOf("!");
-  if (i < 0) return { sheet: "", range: a };
-  return { sheet: a.slice(0, i).replace(/^'(.*)'$/, "$1").replace(/''/g, "'"), range: a.slice(i + 1) };
+  return TC.Link.splitAddress(a);
 }
 function colNum(l) { let n = 0; for (const ch of l.toUpperCase()) n = n * 26 + ch.charCodeAt(0) - 64; return n; }
 function a1Rect(r) {
@@ -1005,13 +1332,55 @@ function rangeText(values, numberFormat) {
 }
 async function xlReadRange(address) {
   let txt = "";
-  await Excel.run(async (ctx) => {
+  await xlRun(async (ctx) => {
     const a = splitAddr(address);
     const ws = a.sheet ? ctx.workbook.worksheets.getItem(a.sheet) : ctx.workbook.worksheets.getActiveWorksheet();
     const r = ws.getRange(a.range); r.load("values,numberFormat"); await ctx.sync();
     txt = rangeText(r.values, r.numberFormat);
   });
   return txt;
+}
+async function xlResolveLink(link) {
+  return TC.Link.resolve(link, (name) => xlRun(async (ctx) => {
+    const item = ctx.workbook.names.getItem(name);
+    item.load("formula");
+    const range = item.getRange();
+    range.load("address");
+    range.worksheet.load("id,name");
+    await ctx.sync();
+    return { formula: item.formula, address: range.address, worksheetId: range.worksheet.id, sheet: range.worksheet.name };
+  }));
+}
+async function xlSetNamedLink(chartId, address) {
+  const name = TC.Link.definedName(chartId);
+  return xlRun(async (ctx) => {
+    const parsed = splitAddr(address);
+    const sheet = parsed.sheet ? ctx.workbook.worksheets.getItem(parsed.sheet) : ctx.workbook.worksheets.getActiveWorksheet();
+    sheet.load("id,name");
+    const range = sheet.getRange(parsed.range); range.load("address");
+    const existing = ctx.workbook.names.getItemOrNullObject(name); existing.load("name");
+    await ctx.sync();
+    if (existing.isNullObject) ctx.workbook.names.add(name, range, "think-cell 风格图表数据链接");
+    else existing.formula = "=" + range.address;
+    await ctx.sync();
+    return TC.Link.createRecord(chartId, { worksheetId: sheet.id, sheet: sheet.name, address: range.address });
+  });
+}
+async function xlEnsureNamedLink(record) {
+  if (!record.link) return null;
+  if (record.link.kind === "workbook-name") {
+    const resolved = await xlResolveLink(record.link);
+    if (resolved.status === "broken") {
+      const error = new Error("Excel 链接已失效；现有图表和最后一次数据已保留");
+      error.code = resolved.error && resolved.error.code;
+      error.link = resolved;
+      throw error;
+    }
+    return resolved;
+  }
+  const address = typeof record.link === "string" ? record.link : (record.link.address || record.link.lastAddress);
+  if (!address) throw new Error("Excel 链接缺少单元格地址");
+  return xlSetNamedLink(record.chartId, address);
 }
 function gridValues(grid, plain) {
   const vals = grid.map((r, i) => r.map((c, j) => {
@@ -1023,18 +1392,24 @@ function gridValues(grid, plain) {
   vals.forEach((r) => { while (r.length < w) r.push(""); });
   return vals;
 }
-let LINK_MUTE_UNTIL = 0;
+const LINK_ECHOES = TC.Link.createEchoTracker({ ttl: 10000 });
+const LINK_REFRESHES = TC.Link.createRefreshQueue({
+  delay: 600,
+  run: (chartId, payload) => refreshLinked(payload.name, chartId),
+  onError: (error) => status("链接图表更新失败：" + (error.message || error), "bad"),
+});
 // 把面板数据写到 Excel（from = 链接地址，或省略 = 当前选中单元格左上角），返回带表名的新地址
-async function xlWriteGrid(grid, from) {
+async function xlWriteGrid(grid, from, echo) {
   let addr = "";
   const vals = gridValues(grid, !!from);   // 写回已链接区域：类目列数字保持数字
-  LINK_MUTE_UNTIL = Date.now() + 2500;
-  await Excel.run(async (ctx) => {
+  await xlRun(async (ctx) => {
     let tl;
     if (from) { const a = splitAddr(from); const ws = a.sheet ? ctx.workbook.worksheets.getItem(a.sheet) : ctx.workbook.worksheets.getActiveWorksheet(); tl = ws.getRange(a.range).getCell(0, 0); }
     else tl = ctx.workbook.getSelectedRange().getCell(0, 0);
     const rng = tl.getResizedRange(vals.length - 1, vals[0].length - 1);
-    rng.values = vals; rng.load("address"); await ctx.sync();
+    rng.load("address"); rng.worksheet.load("id"); await ctx.sync();
+    if (echo && echo.chartId) LINK_ECHOES.expect({ chartId: echo.chartId, worksheetId: rng.worksheet.id, address: rng.address, values: vals });
+    rng.values = vals; await ctx.sync();
     addr = rng.address;
   });
   return addr;
@@ -1045,81 +1420,162 @@ async function xlWriteSelection() {
   SEL_ADDRESS = await xlWriteGrid(g);
   return `已写入 ${SEL_ADDRESS}。现在点「插入图表（高保真）」，图会和这些单元格链接`;
 }
-const LINK_TIMERS = {};
-async function onXlChanged(ev) {
-  if (Date.now() < LINK_MUTE_UNTIL) return;
-  const names = chartIndex().filter((n) => { const st = getChartState(n); return st && st.link; });
-  if (!names.length) return;
-  let sheet = "";
-  try { await Excel.run(async (ctx) => { const ws = ctx.workbook.worksheets.getItem(ev.worksheetId); ws.load("name"); await ctx.sync(); sheet = ws.name; }); } catch (e) { return; }
-  const hit = a1Rect(ev.address);
-  names.forEach((n) => {
-    const L = splitAddr(getChartState(n).link);
-    if ((L.sheet || sheet) === sheet && intersects(a1Rect(L.range), hit)) {
-      clearTimeout(LINK_TIMERS[n]); LINK_TIMERS[n] = setTimeout(() => refreshLinked(n), 600);
-    }
+async function xlChangedLinks(records, ev) {
+  return xlRun(async (ctx) => {
+    const sheet = ctx.workbook.worksheets.getItem(ev.worksheetId); sheet.load("name");
+    const changed = sheet.getRange(ev.address); changed.load("address,values");
+    const named = records.filter((entry) => entry.record.link && entry.record.link.kind === "workbook-name").map((entry) => {
+      const item = ctx.workbook.names.getItemOrNullObject(entry.record.link.name); item.load("name,formula");
+      return Object.assign({ item }, entry);
+    });
+    await ctx.sync();
+
+    named.forEach((entry) => {
+      if (entry.item.isNullObject) return;
+      entry.range = entry.item.getRangeOrNullObject(); entry.range.load("address");
+    });
+    await ctx.sync();
+    named.forEach((entry) => {
+      if (!entry.range || entry.range.isNullObject) return;
+      entry.range.worksheet.load("id,name");
+    });
+    await ctx.sync();
+    named.forEach((entry) => {
+      if (!entry.range || entry.range.isNullObject || entry.range.worksheet.id !== ev.worksheetId) return;
+      entry.intersection = entry.range.getIntersectionOrNullObject(changed); entry.intersection.load("address");
+    });
+    await ctx.sync();
+
+    const matches = [], broken = [];
+    named.forEach((entry) => {
+      if (entry.item.isNullObject || !entry.range || entry.range.isNullObject || /#REF!/i.test(String(entry.item.formula || ""))) {
+        const link = Object.assign({}, entry.record.link, { status: "broken", error: { code: "TC_LINK_REF", message: "Excel 定义名称已失效。" } });
+        broken.push({ name: entry.name, record: Object.assign({}, entry.record, { link }) });
+        return;
+      }
+      const link = TC.Link.createRecord(entry.record.chartId, {
+        worksheetId: entry.range.worksheet.id, sheet: entry.range.worksheet.name, address: entry.range.address,
+      });
+      if (entry.intersection && !entry.intersection.isNullObject) matches.push({ name: entry.name, record: entry.record, link });
+    });
+    records.filter((entry) => !entry.record.link || entry.record.link.kind !== "workbook-name").forEach((entry) => {
+      const link = entry.record.link;
+      const address = typeof link === "string" ? link : (link && (link.address || link.lastAddress));
+      if (!address) return;
+      const parsed = splitAddr(address);
+      if ((parsed.sheet || sheet.name) === sheet.name && intersects(a1Rect(parsed.range), a1Rect(ev.address))) matches.push({ name: entry.name, record: entry.record, link });
+    });
+    return { matches, broken, worksheetId: ev.worksheetId, address: changed.address, values: changed.values };
   });
 }
-async function refreshLinked(name) {
-  const st = getChartState(name);
-  if (!st || !st.link || !API) return;
+async function onXlChanged(ev) {
+  const records = chartIndex().map((name) => ({ name, record: getChartRecord(name) })).filter((entry) => entry.record && entry.record.link);
+  if (!records.length) return;
+  let changed;
+  try { changed = await xlChangedLinks(records, ev); } catch (e) { status("无法检查 Excel 链接变化：" + (e.message || e), "bad"); return; }
+  for (const entry of changed.broken) {
+    try { await documentStore().save(entry.record); } catch (e) { /* 保留原记录，稍后由维护工具处理 */ }
+  }
+  if (changed.broken.length) status("检测到失效的 Excel 链接；现有图表已保留", "bad");
+  changed.matches.forEach((entry) => {
+    const chartId = entry.record.chartId || entry.name;
+    const echo = { chartId, worksheetId: changed.worksheetId, address: changed.address, values: changed.values };
+    if (!LINK_ECHOES.consume(echo)) LINK_REFRESHES.schedule(chartId, { name: entry.name, revision: entry.record.revision });
+  });
+}
+async function refreshLinked(name, chartId) {
+  const stored = getChartRecord(name, chartId);
+  if (!stored || !stored.link || !API) return;
+  name = (stored.meta && stored.meta.hostName) || name;
   try {
-    st.data = await xlReadRange(st.link);
+    const link = await xlResolveLink(stored.link);
+    if (!link || link.status === "broken") {
+      stored.link = link;
+      await documentStore().save(stored);
+      status("Excel 链接已失效；已保留现有图表和最后一次数据", "bad");
+      return;
+    }
+    const linkedRecord = Object.assign({}, stored, { link });
+    const st = flattenChartRecord(linkedRecord);
+    st.data = await xlReadRange(link.lastAddress);
     const out = renderState(st);
-    await xlReplaceShape(name, out, st.sheet);
-    await saveChartState(name, st);
-    if (EDIT && EDIT.name === name) { setData(st.data, true); SEL_ADDRESS = st.link; renderOpts(); render(); }
+    const replacement = await xlReplaceShape(name, out, st.sheet, st, stored.chartId, link);
+    if (EDIT && (EDIT.chartId === replacement.record.chartId || EDIT.name === name)) {
+      EDIT.name = replacement.name; EDIT.chartId = replacement.record.chartId; EDIT.revision = replacement.record.revision;
+      setData(st.data, true); SEL_ADDRESS = link.lastAddress; renderOpts(); render();
+    }
     status(`已按单元格数据自动更新：${st.title || "图表"}`, "ok");
   } catch (e) { status("链接图表更新失败：" + (e.message || e), "bad"); }
 }
 async function xlWatch() {
-  try {
-    await Excel.run(async (ctx) => { ctx.workbook.worksheets.onChanged.add(onXlChanged); await ctx.sync(); });
-  } catch (e) {   // 旧版 Excel：逐个工作表注册
+  let collectionError = null;
+  if (OFFICE_CAPS.excelCollectionEvents) {
     try {
-      await Excel.run(async (ctx) => {
-        const wss = ctx.workbook.worksheets; wss.load("items"); await ctx.sync();
-        wss.items.forEach((ws) => ws.onChanged.add(onXlChanged)); await ctx.sync();
-      });
-    } catch (e2) { /* 不支持事件：只能手动更新 */ }
+      await xlRun(async (ctx) => { ctx.workbook.worksheets.onChanged.add(onXlChanged); await ctx.sync(); });
+      return;
+    } catch (error) { collectionError = error; }
   }
+  if (OFFICE_CAPS.excelWorksheetEvents) {
+    await xlRun(async (ctx) => {
+      const wss = ctx.workbook.worksheets; wss.load("items"); await ctx.sync();
+      wss.items.forEach((ws) => ws.onChanged.add(onXlChanged)); await ctx.sync();
+    });
+    return;
+  }
+  if (collectionError) throw collectionError;
+  status("当前 Excel 版本不支持自动监听单元格变化；可用“更新所选图表”手动刷新", "bad");
 }
 async function xlRefreshList(selectName) {
   if (HOST !== "xl") return;
   try {
-    await Excel.run(async (ctx) => {
-      const sh = ctx.workbook.worksheets.getActiveWorksheet();
-      sh.shapes.load("items/name"); await ctx.sync();
-      const items = sh.shapes.items.filter((x) => String(x.name).startsWith(PREFIX) && getChartState(x.name));
+    await xlRun(async (ctx) => {
+      const sh = ctx.workbook.worksheets.getActiveWorksheet(); sh.load("id,name");
+      sh.shapes.load("items/id,items/name,items/altTextDescription"); await ctx.sync();
+      const items = sh.shapes.items.map((shape) => {
+        const identity = TC.Office.parseExcelIdentity(shape.altTextDescription);
+        const record = getChartRecord(shape.name, identity && identity.chartId);
+        return { shape, identity, record };
+      }).filter((item) => item.record && (item.identity || String(item.shape.name).startsWith(PREFIX)));
       const cur = selectName !== undefined ? selectName : $("xlCharts").value;
-      $("xlCharts").innerHTML = '<option value="">（新建）</option>' + items.map((x) => {
-        const st = getChartState(x.name) || {};
-        return `<option value="${esc(x.name)}">${st.link ? "🔗 " : ""}${esc(st.title || x.name)}</option>`;
+      $("xlCharts").innerHTML = '<option value="">（新建）</option>' + items.map((item) => {
+        const st = flattenChartRecord(item.record) || {};
+        const hostRef = `xl:${sh.name}:${item.shape.id}`;
+        return `<option value="${esc(item.shape.name)}" data-chart-id="${esc(item.record.chartId || "")}" data-host-ref="${esc(hostRef)}">${st.link ? "🔗 " : ""}${esc(st.title || item.shape.name)}</option>`;
       }).join("");
       if ([...$("xlCharts").options].some((o) => o.value === cur)) $("xlCharts").value = cur;
     });
   } catch (e) { /* 忽略 */ }
 }
-function xlPick(name) {
+async function xlPick(name, chartId, hostRef) {
   if (!name) { if (EDIT) endEdit(true); return; }
-  const st = getChartState(name); if (!st) return;
-  EDIT = { name, title: st.title };
+  const forked = await ensureUniqueIdentityForEdit(hostRef);
+  if (forked) { name = forked.name; chartId = forked.record.chartId; await xlRefreshList(name); }
+  const record = getChartRecord(name, chartId);
+  const st = flattenChartRecord(record); if (!st) return;
+  EDIT = { name, chartId: record.chartId, revision: record.revision, title: st.title };
   applyState(st); render(); showBanner();
 }
 async function xlUpdate() {
   if (!EDIT) throw new Error("没有正在编辑的图表");
-  const prev = getChartState(EDIT.name) || {};
+  const previousRecord = getChartRecord(EDIT.name, EDIT.chartId);
+  if (!previousRecord) throw new Error("找不到该图表的文档状态");
+  const prev = flattenChartRecord(previousRecord) || {};
   const st = panelState(); st.sheet = prev.sheet;
+  let link = previousRecord.link;
   let note = "";
-  if (prev.link) {
-    st.link = prev.link;
+  if (link) {
+    const resolved = await xlResolveLink(link);
+    if (resolved.status === "broken") throw new Error("Excel 链接已失效；请重新选择数据区域后再更新");
+    link = resolved; st.link = link;
     if (parseGrid(st.data).join("\n") !== parseGrid(prev.data || "").join("\n")) {   // 面板里改了数据 → 写回链接的单元格
-      st.link = await xlWriteGrid(parseGrid(st.data), prev.link);
-      note = `，数据已写回 ${st.link}`;
+      const address = await xlWriteGrid(parseGrid(st.data), link.lastAddress, { chartId: previousRecord.chartId });
+      link = await xlSetNamedLink(previousRecord.chartId, address);
+      st.link = link;
+      note = `，数据已写回 ${link.lastAddress}`;
     }
-  } else if (SEL_ADDRESS) st.link = SEL_ADDRESS;
-  await xlReplaceShape(EDIT.name, LAST, st.sheet);
-  await saveChartState(EDIT.name, st);
+  } else if (SEL_ADDRESS) { st.link = SEL_ADDRESS; link = undefined; }
+  const replacement = await xlReplaceShape(EDIT.name, LAST, st.sheet, st, EDIT.chartId, link);
+  EDIT.name = replacement.name; EDIT.chartId = replacement.record.chartId; EDIT.revision = replacement.record.revision;
   EDIT.title = $("title").value; showBanner(); xlRefreshList(EDIT.name);
   return "已在原位置更新" + note;
 }
@@ -1141,11 +1597,15 @@ async function xlInsertNative() {
   const kind = xlChartType(LAST.spec);
   if (!kind) throw new Error("这种图 Excel 没有原生类型，请用「插入图表（高保真）」");
   const grid = parseGrid($("data").value);
-  await Excel.run(async (ctx) => {
-    const sh = ctx.workbook.worksheets.getActiveWorksheet();
-    let rng;
-    if (SEL_ADDRESS) rng = sh.getRange(SEL_ADDRESS.split("!").pop());
+  await xlRun(async (ctx) => {
+    let sh, rng;
+    if (SEL_ADDRESS) {
+      const address = splitAddr(SEL_ADDRESS);
+      sh = address.sheet ? ctx.workbook.worksheets.getItem(address.sheet) : ctx.workbook.worksheets.getActiveWorksheet();
+      rng = sh.getRange(address.range);
+    }
     else {  // 数据是粘贴进来的：先写到选中单元格处
+      sh = ctx.workbook.worksheets.getActiveWorksheet();
       const sel = ctx.workbook.getSelectedRange(); sel.load("address"); await ctx.sync();
       const tl = sel.getCell(0, 0);
       const vals = gridValues(grid), w = vals[0].length;
@@ -1157,7 +1617,7 @@ async function xlInsertNative() {
     ch.title.format.font.size = 13; ch.title.format.font.bold = true;
     try { ch.axes.valueAxis.majorGridlines.visible = false; } catch (e) { /* 部分类型无数值轴 */ }
     ch.dataLabels.showValue = true;
-    const pal = { consulting: ["#0B2D4F", "#1F5A8C", "#3F86C0", "#7FB2DC", "#B9D5EC"], semi: ["#1F5A8C", "#A6A6A6", "#7FB2DC", "#595959", "#D9D9D9"], dark: ["#5B9BD5", "#3F86C0", "#7FB2DC", "#B9D5EC", "#DDE9F5"] }[LAST.spec.theme || "consulting"];
+    const pal = TC.Office.resolvePalette(LAST.spec.theme || "consulting");
     ch.series.load("items"); await ctx.sync();
     if (!["Pie", "Doughnut", "Waterfall", "Pareto"].includes(kind)) {
       const n = ch.series.items.length;
@@ -1172,13 +1632,165 @@ async function xlInsertNative() {
   return "已插入原生图表（改单元格数据会自动更新）";
 }
 async function xlReadSelection() {
-  await Excel.run(async (ctx) => {
+  await xlRun(async (ctx) => {
     const r = ctx.workbook.getSelectedRange(); r.load("values,numberFormat,address"); await ctx.sync();
     setData(rangeText(r.values, r.numberFormat));
     SEL_ADDRESS = r.address;
   });
   renderOpts(); schedule();
   return "已读取选区 " + (SEL_ADDRESS || "");
+}
+
+// ------------------------------------------------------------------ 文档诊断与显式恢复
+let MAINTENANCE = null;
+async function scanHostShapes() {
+  if (HOST === "xl") {
+    return xlRun(async (ctx) => {
+      const sheets = ctx.workbook.worksheets; sheets.load("items/id,items/name"); await ctx.sync();
+      sheets.items.forEach((sheet) => sheet.shapes.load("items/id,items/name,items/altTextDescription"));
+      await ctx.sync();
+      const shapes = [];
+      sheets.items.forEach((sheet) => sheet.shapes.items.forEach((shape) => {
+        const identity = TC.Office.parseExcelIdentity(shape.altTextDescription);
+        shapes.push({
+          hostRef: `xl:${sheet.name}:${shape.id}`, host: "xl", sheetName: sheet.name, sheetId: sheet.id,
+          shapeId: shape.id, name: shape.name, chartId: identity && identity.chartId,
+          revision: identity ? identity.revision : 0, pendingToken: identity && identity.pendingToken,
+        });
+      }));
+      return shapes;
+    });
+  }
+  if (HOST === "ppt") {
+    return pptRun(async (ctx) => {
+      const slides = ctx.presentation.slides; slides.load("items/id"); await ctx.sync();
+      slides.items.forEach((slide) => slide.shapes.load("items/id,items/name")); await ctx.sync();
+      if (OFFICE_CAPS.powerPointShapeMetadata) {
+        slides.items.forEach((slide) => slide.shapes.items.forEach((shape) => shape.tags.load("items/key,items/value")));
+        await ctx.sync();
+      }
+      const shapes = [];
+      slides.items.forEach((slide) => slide.shapes.items.forEach((shape) => {
+        const tags = {};
+        if (OFFICE_CAPS.powerPointShapeMetadata) shape.tags.items.forEach((tag) => { tags[tag.key] = tag.value; });
+        const identity = TC.Office.powerPointIdentity(tags, shape.name);
+        shapes.push({
+          hostRef: `ppt:${slide.id}:${shape.id}`, host: "ppt", slideId: slide.id, shapeId: shape.id,
+          name: shape.name, chartId: identity && identity.chartId,
+          revision: identity ? identity.revision : 0, pendingToken: identity && identity.pendingToken,
+        });
+      }));
+      return shapes;
+    });
+  }
+  return [];
+}
+function maintenanceIssue(text, action, label, data) {
+  const button = action ? `<button class="ghost" data-maint="${action}" ${data || ""}>${label}</button>` : "";
+  return `<div class="issue">${text}${button}</div>`;
+}
+function renderMaintenance(report) {
+  const total = report.pending.length + report.forks.length + report.duplicates.length + report.orphans.length
+    + report.untracked.length + report.brokenLinks.length + report.legacyKeys.length;
+  $("docHealthSummary").textContent = total
+    ? `发现 ${total} 项需留意的状态；所有恢复操作都保留现有图表。`
+    : "文档状态正常，未发现待恢复操作、重复标识或断链。";
+  const issues = [];
+  report.pending.forEach((item) => issues.push(maintenanceIssue(
+    `有一项未完成操作 <code>${esc(item.chartId)}</code><br>`, "recover", "确认已保存并结束恢复", `data-id="${esc(item.chartId)}"`,
+  )));
+  report.forks.forEach((item, index) => issues.push(maintenanceIssue(
+    `发现可安全拆分的图表副本 <code>${esc(item.shape.hostRef)}</code><br>`, "fork", "将副本设为独立图表", `data-index="${index}"`,
+  )));
+  report.duplicates.forEach((item) => issues.push(maintenanceIssue(
+    `图表标识存在无法自动判断的重复项 <code>${esc(item.chartId)}</code>；请先确认要保留的副本。`, null,
+  )));
+  report.brokenLinks.forEach((item) => issues.push(maintenanceIssue(
+    `Excel 数据链接已失效 <code>${esc(item.chartId)}</code><br>`, HOST === "xl" ? "relink" : null, "链接到当前选区", `data-id="${esc(item.chartId)}"`,
+  )));
+  report.orphans.forEach((item) => issues.push(maintenanceIssue(
+    `存在没有对应形状的图表状态 <code>${esc(item.chartId)}</code><br>`, "inspect", "查看信息", `data-id="${esc(item.chartId)}"`,
+  )));
+  if (report.untracked.length) issues.push(maintenanceIssue(`发现 ${report.untracked.length} 个没有可用状态的 TC: 形状；未作修改。`, null));
+  if (report.legacyKeys.length) issues.push(maintenanceIssue(`仍保留 ${report.legacyKeys.length} 个旧版状态键；仅兼容读取，不会自动删除。`, null));
+  $("docIssues").innerHTML = issues.join("") || '<div class="issue">无需处理。</div>';
+  $("btnCopyDiag").disabled = false;
+}
+async function checkDocumentMaintenance() {
+  const store = documentStore();
+  if (!store) throw new Error("当前文档不支持状态检查");
+  const classified = store.classifyRecords();
+  const records = classified.records.map((entry) => entry.record).filter(Boolean);
+  const shapes = await scanHostShapes();
+  const report = TC.Store.maintenanceReport({ records, shapes, pending: classified.pending, legacyNames: classified.legacyNames });
+  MAINTENANCE = { report, records, shapes };
+  renderMaintenance(report);
+  return report;
+}
+async function recoverMaintenancePending(chartId) {
+  await documentStore().recoverPending(chartId);
+  await checkDocumentMaintenance();
+  return "已确认持久化状态并清除未完成标记；未删除任何图表";
+}
+async function relinkMaintenanceChart(chartId) {
+  if (HOST !== "xl") throw new Error("重新链接只适用于 Excel");
+  let address = "";
+  await xlRun(async (ctx) => { const range = ctx.workbook.getSelectedRange(); range.load("address"); await ctx.sync(); address = range.address; });
+  const record = documentStore().load(chartId);
+  if (!record) throw new Error("找不到待重新链接的图表状态");
+  record.link = await xlSetNamedLink(chartId, address);
+  await documentStore().save(record);
+  if (record.meta && record.meta.hostName) await refreshLinked(record.meta.hostName, chartId);
+  await checkDocumentMaintenance();
+  return `已重新链接到 ${record.link.lastAddress}`;
+}
+async function forkReconciledShape(item, refreshMaintenance) {
+  const record = item.forkRecord, shape = item.shape;
+  const finalName = newChartName(record.chartId);
+  record.meta = Object.assign({}, record.meta, { hostName: finalName, hostRef: shape.hostRef });
+  await documentStore().save(record);
+  if (HOST === "xl") {
+    await xlRun(async (ctx) => {
+      const target = ctx.workbook.worksheets.getItem(shape.sheetName).shapes.getItem(shape.name);
+      target.name = finalName;
+      try { target.altTextDescription = TC.Office.encodeExcelIdentity({ chartId: record.chartId, revision: record.revision, title: record.chart.title || "" }); } catch (e) { /* 名称仍可识别 */ }
+      await ctx.sync();
+    });
+  } else if (HOST === "ppt") {
+    await pptRun(async (ctx) => {
+      const target = ctx.presentation.slides.getItem(shape.slideId).shapes.getItem(shape.shapeId);
+      target.name = finalName;
+      try { target.tags.add("TCCHART", "3"); target.tags.add("TC_CHART_ID", record.chartId); target.tags.add("TC_REVISION", String(record.revision)); } catch (e) { /* 名称仍可识别 */ }
+      await ctx.sync();
+    });
+  }
+  if (refreshMaintenance) await checkDocumentMaintenance();
+  return { record, name: finalName };
+}
+async function ensureUniqueIdentityForEdit(hostRef) {
+  if (!hostRef) return null;
+  const store = documentStore(); if (!store) return null;
+  const classified = store.classifyRecords();
+  const records = classified.records.map((entry) => entry.record).filter(Boolean);
+  const shapes = await scanHostShapes();
+  const report = TC.Store.maintenanceReport({ records, shapes, pending: classified.pending, legacyNames: classified.legacyNames });
+  const disposition = TC.Store.editDisposition(report, hostRef);
+  if (disposition.action === "ambiguous") throw new Error("该图表与多个副本共用标识，无法判断原件；请在“文档状态与恢复”中检查");
+  if (disposition.action !== "fork") return null;
+  const forked = await forkReconciledShape(disposition.item, false);
+  status("检测到复制的图表，已为该副本分配独立标识", "ok");
+  return forked;
+}
+async function forkMaintenanceShape(index) {
+  if (!MAINTENANCE || !MAINTENANCE.report.forks[index]) throw new Error("该副本状态已变化，请重新检查文档");
+  await forkReconciledShape(MAINTENANCE.report.forks[index], true);
+  return "已将复制的形状设为独立图表；原图和副本均保留";
+}
+function maintenanceDiagnostic() {
+  if (!MAINTENANCE) throw new Error("请先检查文档");
+  return TC.Store.diagnosticSummary({
+    addinVersion: "1.0.5.0", engineVersion: "1", host: HOST, capabilities: OFFICE_CAPS, report: MAINTENANCE.report,
+  });
 }
 
 // ------------------------------------------------------------------ 状态保存
@@ -1188,8 +1800,12 @@ function panelState() {
     legendRev: $("legendRev").checked, mag: $("mag").value, opt: OPT, ann: ANN, colors: COLORS,
     json: $("jsonLock").checked ? $("json").value : null, sel: SEL_ADDRESS };
 }
-function saveState() { if (!EDIT) store.set("state", panelState()); }
+function saveState() { if (!EDIT) store.set("state", TC.State.normalize(panelState(), { mode: "write" })); }
 function applyState(s) {
+  let record;
+  try { record = TC.State.normalize(s, { mode: "read" }); }
+  catch (e) { return false; }
+  s = record.chart;
   if (!s || !T[s.type]) return false;
   $("type").value = s.type;
   ["title", "subtitle", "source", "theme", "dec", "size", "legend", "mag"].forEach((k) => { if (s[k] !== undefined && s[k] !== null) $(k).value = s[k]; });
@@ -1206,11 +1822,11 @@ function loadState() { return applyState(store.get("state", null)); }
 
 // ------------------------------------------------------------------ 启动
 const act = (fn, needChart = true) => async () => {
-  if (needChart && !LAST) return;
-  setBusy(true); status("处理中…");
+  if (needChart && !chartReady()) return;
+  const endBusy = UI_BUSY.begin(); status("处理中…");
   try { const msg = await fn(); status(msg || "完成", "ok"); }
   catch (e) { status("失败：" + (e.message || e.code || e), "bad"); console.error(e); }
-  finally { setBusy(false); }
+  finally { endBusy(); }
 };
 function wire() {
   $("type").innerHTML = TYPES.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
@@ -1234,12 +1850,16 @@ function wire() {
   ["dec", "size", "legend", "mag", "legendRev"].forEach((k) => $(k).addEventListener("change", schedule));
   $("theme").addEventListener("change", () => { COLOR_KEY = ""; renderThemeEditor(); schedule(); });
   $("btnSample").onclick = () => { setData(T[$("type").value].sample); COLORS = {}; renderOpts(); schedule(); };
-  $("btnLoadSel").onclick = () => loadSelectedChart();
+  $("btnLoadSel").onclick = () => loadSelectedChart().catch((e) => status("载入图表失败：" + (e.message || e), "bad"));
   $("btnNewChart").onclick = () => endEdit(true);
   $("btnUpdate").onclick = act(pptUpdate);
   $("btnUpdateXl").onclick = act(xlUpdate);
   $("xlCharts").addEventListener("mousedown", () => xlRefreshList());
-  $("xlCharts").addEventListener("change", () => xlPick($("xlCharts").value));
+  $("xlCharts").addEventListener("change", () => {
+    const option = $("xlCharts").selectedOptions[0];
+    xlPick($("xlCharts").value, option && option.dataset.chartId, option && option.dataset.hostRef)
+      .catch((e) => status("载入图表失败：" + (e.message || e), "bad"));
+  });
   $("btnJson").onclick = () => render(true);
   $("btnSvgPpt").onclick = act(pptInsertSvg);
   $("btnSlide").onclick = act(pptInsertSlide);
@@ -1247,6 +1867,34 @@ function wire() {
   $("btnNative").onclick = act(xlInsertNative);
   $("btnSel").onclick = act(xlReadSelection, false);
   $("btnWriteXl").onclick = act(xlWriteSelection, false);
+  $("btnDocCheck").onclick = async () => {
+    $("btnDocCheck").disabled = true; status("正在检查文档状态…");
+    try { await checkDocumentMaintenance(); status("文档状态检查完成", "ok"); }
+    catch (e) { status("文档状态检查失败：" + (e.message || e), "bad"); }
+    finally { $("btnDocCheck").disabled = false; }
+  };
+  $("btnCopyDiag").onclick = async () => {
+    try {
+      const ok = await copyText(JSON.stringify(maintenanceDiagnostic(), null, 2));
+      status(ok ? "已复制不含图表数据的诊断信息" : "复制诊断信息失败", ok ? "ok" : "bad");
+    } catch (e) { status("复制诊断信息失败：" + (e.message || e), "bad"); }
+  };
+  $("docIssues").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-maint]"); if (!button) return;
+    button.disabled = true;
+    try {
+      let message = "";
+      if (button.dataset.maint === "recover") message = await recoverMaintenancePending(button.dataset.id);
+      if (button.dataset.maint === "relink") message = await relinkMaintenanceChart(button.dataset.id);
+      if (button.dataset.maint === "fork") message = await forkMaintenanceShape(Number(button.dataset.index));
+      if (button.dataset.maint === "inspect") {
+        const record = documentStore().load(button.dataset.id);
+        message = record ? `孤立状态：${record.chartId}，修订 ${record.revision}；未作修改` : "该状态已不存在";
+      }
+      status(message || "恢复操作完成", "ok");
+    } catch (e) { status("恢复操作失败：" + (e.message || e), "bad"); }
+    finally { button.disabled = false; }
+  });
   $("btnDlSvg").onclick = act(async () => { download(fileBase() + ".svg", new Blob([LAST.svg], { type: "image/svg+xml" })); return "已下载 SVG"; });
   $("btnDlPng").onclick = act(async () => { const u = await svgToPngDataUrl(LAST.svg, LAST.width, LAST.height, 3); download(fileBase() + ".png", b64ToBlob(u.split(",")[1], "image/png")); return "已下载 PNG"; });
   $("btnDlPptx").onclick = act(async () => { download(fileBase() + ".pptx", b64ToBlob(await pptxB64(), "application/vnd.openxmlformats-officedocument.presentationml.presentation")); return "已下载 PPTX"; });
@@ -1256,27 +1904,39 @@ function wire() {
   $("btnSlide").after(r);
   renderThemeEditor();
   renderOpts();
-  setBusy(true);
+  END_STARTUP_BUSY = UI_BUSY.begin();
 }
 const onDataChanged = (() => { const o = debounce(() => renderOpts(), 400); return () => { o(); schedule(); }; })();
 function setHost(h) {
   HOST = h;
+  OFFICE_CAPS = TC.Office.getCapabilities(window.Office, HOST);
   document.body.classList.remove("ppt", "xl", "web");
   document.body.classList.add(h);
   $("host").textContent = { ppt: "PowerPoint", xl: "Excel", web: "浏览器预览模式" }[h];
+  applyCapabilityUi();
 }
 
 wire();
 setHost("web");
 let hostSet = false;
 if (window.Office && Office.onReady) {
-  Office.onReady((info) => {
+  Office.onReady(async (info) => {
     hostSet = true;
     if (info.host === Office.HostType.PowerPoint) {
       setHost("ppt");
-      try { Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, () => pptSelectionChanged()); } catch (e) { /* 忽略 */ }
-      pptSelectionChanged();
-    } else if (info.host === Office.HostType.Excel) { setHost("xl"); xlRefreshList(); xlWatch(); }
+      try {
+        await TC.Office.fromAsyncResult((callback) => Office.context.document.addHandlerAsync(
+          Office.EventType.DocumentSelectionChanged,
+          () => { pptSelectionChanged().catch((e) => console.error("PowerPoint selection refresh failed", e)); },
+          callback,
+        ), Office);
+      } catch (e) { status("无法监听 PowerPoint 选区变化；可重新打开任务窗格后再试", "bad"); }
+      await pptSelectionChanged();
+    } else if (info.host === Office.HostType.Excel) {
+      setHost("xl");
+      xlRefreshList();
+      xlWatch().catch((e) => status("Excel 自动监听初始化失败：" + (e.message || e), "bad"));
+    }
   });
 }
 initPy();

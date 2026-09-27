@@ -1,0 +1,13 @@
+{
+  "v": 2,
+  "type": "line",
+  "data": "Year\tRevenue\n2025\t10\n2026\t12",
+  "title": "Legacy v2",
+  "subtitle": "USD million",
+  "theme": "consulting",
+  "opt": {},
+  "ann": {},
+  "colors": {},
+  "link": "'Data 2026'!$A$1:$B$3",
+  "sheet": "Data 2026"
+}

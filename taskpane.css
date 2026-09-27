@@ -56,7 +56,7 @@ button:disabled { opacity: .5; cursor: default; }
 .loading.hide { display: none; }
 .spinner { width: 18px; height: 18px; border: 2px solid #E6C77A; border-top-color: #5C4400; border-radius: 50%; animation: spin 1s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
-body:not(.ppt) .ppt-only, body:not(.xl) .xl-only, body:not(.web) .web-only { display: none !important; }
+body:not(.ppt) .ppt-only, body:not(.xl) .xl-only, body:not(.web) .web-only, body.web .office-only { display: none !important; }
 
 .hide { display: none !important; }
 body.ppt .bar, body.xl .bar { display: none; }
@@ -79,4 +79,10 @@ body.ppt .bar, body.xl .bar { display: none; }
 .colors button.rs { padding: 0 4px; font-size: 11px; border: 0; color: var(--muted); }
 .themeed { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
 .swatches { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.maintbar { display: flex; gap: 6px; margin: 8px 0 4px; }
+.issues { display: flex; flex-direction: column; gap: 5px; margin-top: 7px; }
+.issue { border-top: 1px dashed var(--line); padding-top: 6px; font-size: 12px; }
+.issue:first-child { border-top: 0; }
+.issue code { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.issue button { margin-top: 4px; }
 .grid3 { grid-template-columns: repeat(3, 1fr); }
