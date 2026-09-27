@@ -153,6 +153,18 @@
     return slides.length === 1 && slides[0] === targetSlideId ? Array.from(selectedShapeIds || []) : [];
   }
 
+  function chartSelectionMode(editing, selected) {
+    if (!editing) return selected ? "selected" : "none";
+    if (!selected) return "editing";
+    const editingChartId = String(editing.chartId || "");
+    const selectedChartId = String(selected.chartId || "");
+    const sameIdentity = editingChartId && selectedChartId
+      ? editingChartId === selectedChartId
+      : String(editing.name || "") === String(selected.name || "");
+    const sameShape = editing.id && selected.id ? String(editing.id) === String(selected.id) : true;
+    return sameIdentity && sameShape ? "editing" : "switch";
+  }
+
   function captureChartOutput(output) {
     if (!output || typeof output.svg !== "string" || !Number.isFinite(output.width) || !Number.isFinite(output.height)) {
       throw errorWithCode("TC_RENDER_SNAPSHOT_INVALID", "当前没有可用的图表渲染结果。");
@@ -316,7 +328,7 @@
   return Object.freeze({
     getCapabilities, capabilityGate, createBusyTracker, createFreshnessTracker,
     fromAsyncResult, saveSettings, runPowerPoint, runExcel,
-    resolveInsertedShapeId, selectedShapeIdsOnSlide, captureChartOutput, preparePptReplacement, insertPendingPptShape,
+    resolveInsertedShapeId, selectedShapeIdsOnSlide, chartSelectionMode, captureChartOutput, preparePptReplacement, insertPendingPptShape,
     commitPptReplacement, replacePowerPointChart,
     resolvePalette, insertExcelImageWithFallback, commitExcelReplacement, replaceExcelChart,
     powerPointIdentity, encodeExcelIdentity, parseExcelIdentity, EXCEL_IDENTITY_PREFIX,

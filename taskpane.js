@@ -1126,17 +1126,20 @@ async function pptSelectionChanged() {
 }
 function showBanner() {
   const b = $("editBanner");
-  if (EDIT) {
+  const selectionMode = TC.Office.chartSelectionMode(EDIT, SEL_CHART);
+  if (selectionMode === "editing") {
     b.classList.remove("hide"); b.classList.add("editing");
     $("editMsg").textContent = "正在编辑：" + (EDIT.title || "图表") + "（改完点「更新所选图表」）";
+    $("btnLoadSel").textContent = "载入编辑";
     $("btnLoadSel").classList.add("hide"); $("btnNewChart").classList.remove("hide");
-  } else if (SEL_CHART) {
+  } else if (selectionMode === "selected" || selectionMode === "switch") {
     const st = getChartState(SEL_CHART.name, SEL_CHART.chartId) || {};
     b.classList.remove("hide", "editing");
-    $("editMsg").textContent = "已选中图表：" + (st.title || "未命名");
+    $("editMsg").textContent = (selectionMode === "switch" ? "已选中另一张图表：" : "已选中图表：") + (st.title || "未命名");
+    $("btnLoadSel").textContent = selectionMode === "switch" ? "切换编辑" : "载入编辑";
     $("btnLoadSel").classList.remove("hide"); $("btnNewChart").classList.add("hide");
   } else b.classList.add("hide");
-  $("btnUpdate").classList.toggle("hide", !EDIT || HOST !== "ppt");
+  $("btnUpdate").classList.toggle("hide", !EDIT || HOST !== "ppt" || selectionMode === "switch");
   $("btnUpdateXl").classList.toggle("hide", !EDIT || HOST !== "xl");
 }
 async function loadSelectedChart() {

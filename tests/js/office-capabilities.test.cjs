@@ -119,3 +119,12 @@ test("preview freshness invalidates chart actions immediately during a debounce 
   freshness.publish();
   assert.equal(freshness.isFresh(), true);
 });
+
+test("selecting a different PowerPoint chart offers an explicit edit switch", () => {
+  const editing = { chartId: "chart-a", id: "shape-a" };
+
+  assert.equal(OfficeAdapter.chartSelectionMode(editing, { chartId: "chart-b", id: "shape-b" }), "switch");
+  assert.equal(OfficeAdapter.chartSelectionMode(editing, { chartId: "chart-a", id: "shape-a" }), "editing");
+  assert.equal(OfficeAdapter.chartSelectionMode(editing, null), "editing");
+  assert.equal(OfficeAdapter.chartSelectionMode(null, { chartId: "chart-b", id: "shape-b" }), "selected");
+});
