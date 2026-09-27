@@ -814,7 +814,7 @@ async function initPy() {
     $("loadmsg").textContent = "正在加载 Python 运行环境…";
     PY = await loadPyodide({ indexURL: new URL("pyodide/", location.href).href });
     $("loadmsg").textContent = "正在加载图表引擎…";
-    const buf = await (await fetch("py/pylib.zip?v=7")).arrayBuffer();
+    const buf = await (await fetch("py/pylib.zip?v=8")).arrayBuffer();
     PY.unpackArchive(buf, "zip", { extractDir: "/lib/tc" });
     PY.runPython("import sys; sys.path.insert(0, '/lib/tc'); import addin_api");
     API = PY.pyimport("addin_api");
@@ -1792,7 +1792,7 @@ async function forkMaintenanceShape(index) {
 function maintenanceDiagnostic() {
   if (!MAINTENANCE) throw new Error("请先检查文档");
   return TC.Store.diagnosticSummary({
-    addinVersion: "1.0.5.0", engineVersion: "1", host: HOST, capabilities: OFFICE_CAPS, report: MAINTENANCE.report,
+    addinVersion: "1.0.102.0", engineVersion: "1", host: HOST, capabilities: OFFICE_CAPS, report: MAINTENANCE.report,
   });
 }
 
