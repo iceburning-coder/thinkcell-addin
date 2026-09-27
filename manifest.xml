@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
+           xsi:type="TaskPaneApp">
+  <Id>5c1f7b8e-3a2d-4c6e-9b0f-7d2e4a1c8b93</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Xiaowu</ProviderName>
+  <DefaultLocale>zh-CN</DefaultLocale>
+  <DisplayName DefaultValue="think-cell 风格图表"/>
+  <Description DefaultValue="咨询风格图表：瀑布、Mekko、CAGR/差异箭头等，一键插入 PPT 和 Excel"/>
+  <IconUrl DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/assets/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/assets/icon-64.png"/>
+  <SupportUrl DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/README.html"/>
+  <AppDomains><AppDomain>https://iceburning-coder.github.io/thinkcell-addin</AppDomain></AppDomains>
+  <Hosts>
+    <Host Name="Presentation"/>
+    <Host Name="Workbook"/>
+  </Hosts>
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/taskpane.html"/>
+  </DefaultSettings>
+  <Permissions>ReadWriteDocument</Permissions>
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <Hosts>
+      <Host xsi:type="Presentation">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="Tc.Title"/>
+            <Description resid="Tc.Desc"/>
+            <LearnMoreUrl resid="Tc.Url"/>
+          </GetStarted>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="Tc.Group.Presentation">
+                <Label resid="Tc.Group"/>
+                <Icon>
+                  <bt:Image size="16" resid="Tc.I16"/>
+                  <bt:Image size="32" resid="Tc.I32"/>
+                  <bt:Image size="80" resid="Tc.I80"/>
+                </Icon>
+                <Control xsi:type="Button" id="Tc.Btn.Presentation">
+                  <Label resid="Tc.Btn"/>
+                  <Supertip><Title resid="Tc.Btn"/><Description resid="Tc.Desc"/></Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Tc.I16"/>
+                    <bt:Image size="32" resid="Tc.I32"/>
+                    <bt:Image size="80" resid="Tc.I80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>TcPane</TaskpaneId>
+                    <SourceLocation resid="Tc.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+      <Host xsi:type="Workbook">
+        <DesktopFormFactor>
+          <GetStarted>
+            <Title resid="Tc.Title"/>
+            <Description resid="Tc.Desc"/>
+            <LearnMoreUrl resid="Tc.Url"/>
+          </GetStarted>
+          <ExtensionPoint xsi:type="PrimaryCommandSurface">
+            <OfficeTab id="TabHome">
+              <Group id="Tc.Group.Workbook">
+                <Label resid="Tc.Group"/>
+                <Icon>
+                  <bt:Image size="16" resid="Tc.I16"/>
+                  <bt:Image size="32" resid="Tc.I32"/>
+                  <bt:Image size="80" resid="Tc.I80"/>
+                </Icon>
+                <Control xsi:type="Button" id="Tc.Btn.Workbook">
+                  <Label resid="Tc.Btn"/>
+                  <Supertip><Title resid="Tc.Btn"/><Description resid="Tc.Desc"/></Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Tc.I16"/>
+                    <bt:Image size="32" resid="Tc.I32"/>
+                    <bt:Image size="80" resid="Tc.I80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <TaskpaneId>TcPane</TaskpaneId>
+                    <SourceLocation resid="Tc.Url"/>
+                  </Action>
+                </Control>
+              </Group>
+            </OfficeTab>
+          </ExtensionPoint>
+        </DesktopFormFactor>
+      </Host>
+    </Hosts>
+    <Resources>
+      <bt:Images>
+        <bt:Image id="Tc.I16" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/assets/icon-16.png"/>
+        <bt:Image id="Tc.I32" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/assets/icon-32.png"/>
+        <bt:Image id="Tc.I80" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/assets/icon-80.png"/>
+      </bt:Images>
+      <bt:Urls>
+        <bt:Url id="Tc.Url" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/taskpane.html"/>
+      </bt:Urls>
+      <bt:ShortStrings>
+        <bt:String id="Tc.Title" DefaultValue="think-cell 风格图表"/>
+        <bt:String id="Tc.Group" DefaultValue="咨询图表"/>
+        <bt:String id="Tc.Btn" DefaultValue="think-cell 图表"/>
+      </bt:ShortStrings>
+      <bt:LongStrings>
+        <bt:String id="Tc.Desc" DefaultValue="打开图表面板：粘贴或选中数据，生成瀑布、Mekko、CAGR 箭头等咨询风格图表并插入。"/>
+      </bt:LongStrings>
+    </Resources>
+  </VersionOverrides>
+</OfficeApp>
