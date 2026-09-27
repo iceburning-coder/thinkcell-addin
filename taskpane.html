@@ -6,7 +6,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=Edge">
 <title>think-cell 风格图表</title>
 <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-<link rel="stylesheet" href="taskpane.css">
+<link rel="stylesheet" href="taskpane.css?v=3">
 </head>
 <body>
 <header class="bar">
@@ -20,6 +20,11 @@
     <div><b id="loadmsg">正在加载图表引擎…</b><br><small>首次约 20 MB，之后浏览器会缓存</small></div>
   </div>
 
+  <div id="editBanner" class="banner hide">
+    <span id="editMsg">已选中一张 think-cell 图表</span>
+    <span class="btns"><button id="btnLoadSel" class="ghost">载入编辑</button><button id="btnNewChart" class="ghost hide">改为新建</button></span>
+  </div>
+
   <section class="card">
     <label class="row">
       <span>图表类型</span>
@@ -30,13 +35,23 @@
 
   <section class="card">
     <div class="rowhead">
-      <span>数据 <small>（第一行为表头，可从 Excel 直接粘贴）</small></span>
+      <span>数据 <small>（第一行为表头；可从 Excel 直接粘贴到任意格）</small></span>
       <span class="btns">
         <button id="btnSel" class="ghost xl-only" title="读取 Excel 当前选中区域">读取选区</button>
         <button id="btnSample" class="ghost">示例</button>
       </span>
     </div>
-    <textarea id="data" spellcheck="false" rows="7"></textarea>
+    <div class="gridbar">
+      <button class="ghost" data-g="addRow" title="在当前行下方加一行">+行</button>
+      <button class="ghost" data-g="addCol" title="在当前列右侧加一列">+列</button>
+      <button class="ghost" data-g="delRow" title="删除当前行">−行</button>
+      <button class="ghost" data-g="delCol" title="删除当前列">−列</button>
+      <button class="ghost" data-g="transpose" title="行列互换">转置</button>
+      <button class="ghost" data-g="clear" title="清空">清空</button>
+      <button class="ghost" data-g="text" title="切换为文本编辑">文本</button>
+    </div>
+    <div id="grid" class="grid"></div>
+    <textarea id="data" spellcheck="false" rows="7" class="hide"></textarea>
     <p id="dataErr" class="err"></p>
   </section>
 
@@ -46,17 +61,31 @@
     <label class="row"><span>来源</span><input id="source" placeholder="可留空"></label>
     <div class="grid3">
       <label><span>主题</span>
-        <select id="theme"><option value="consulting">咨询蓝</option><option value="semi">半导体</option><option value="dark">深色</option></select></label>
+        <select id="theme"><option value="consulting">咨询蓝</option><option value="semi">半导体</option><option value="dark">深色</option><option value="custom">公司配色…</option></select></label>
       <label><span>小数位</span>
         <select id="dec"><option value="">自动</option><option>0</option><option>1</option><option>2</option></select></label>
       <label><span>尺寸</span>
-        <select id="size"><option value="680x400">宽 16:9</option><option value="680x480">标准</option><option value="480x400">半页</option><option value="680x300">矮条</option></select></label>
+        <select id="size"><option value="680x400">宽 16:9</option><option value="680x480">标准</option><option value="480x400">半页</option><option value="680x300">矮条</option><option value="560x560">方形</option></select></label>
+      <label><span>图例</span>
+        <select id="legend"><option value="auto">自动</option><option value="label">标在图上</option><option value="top">顶部</option><option value="bottom">底部</option><option value="side">右侧竖排</option><option value="none">不显示</option></select></label>
+      <label><span>数量级</span>
+        <select id="mag" title="把数据按数量级缩小显示（数据本身不变）"><option value="1">原值</option><option value="1e3">÷ 千</option><option value="1e4">÷ 万</option><option value="1e6">÷ 百万</option><option value="1e8">÷ 亿</option><option value="1e9">÷ 十亿</option></select></label>
+      <label class="chk" style="align-self:end"><input type="checkbox" id="legendRev"> 图例反序</label>
+    </div>
+    <div id="themeEd" class="themeed hide">
+      <div class="rowhead"><span>公司配色 <small>（保存在本机，所有图表通用）</small></span><button id="btnThemeReset" class="ghost">恢复默认</button></div>
+      <div class="swatches" id="themeSw"></div>
     </div>
   </section>
 
   <section class="card" id="optCard">
     <div class="rowhead"><span>图表选项</span></div>
     <div id="opts"></div>
+  </section>
+
+  <section class="card" id="colorCard">
+    <div class="rowhead"><span>系列颜色 <small>（点色块修改，↺ 恢复自动）</small></span></div>
+    <div id="colors" class="colors"></div>
   </section>
 
   <section class="card" id="annCard">
@@ -74,11 +103,14 @@
 
   <section class="actions">
     <div class="ppt-only">
+      <button id="btnUpdate" class="primary hide">更新所选图表</button>
       <button id="btnSvgPpt" class="primary">插入到当前页</button>
       <button id="btnSlide">作为新幻灯片插入（可编辑形状）</button>
-      <p class="hint">插入到当前页后，右键 →「转换为形状」即可逐个元素编辑。</p>
+      <p class="hint">以后选中这张图，面板会提示「载入编辑」，改完点「更新所选图表」即在原位置替换。先选中一个形状或占位符再插入，图会放进它的位置。右键 →「转换为形状」可逐个编辑（转换后不再能用面板更新）。</p>
     </div>
     <div class="xl-only">
+      <label class="row"><span>本表图表</span><select id="xlCharts"><option value="">（新建）</option></select></label>
+      <button id="btnUpdateXl" class="primary hide">更新所选图表</button>
       <button id="btnSvgXl" class="primary">插入图表（高保真）</button>
       <button id="btnNative">插入 Excel 原生图表（可改数据）</button>
       <p class="hint">原生图表可随单元格数据更新，但没有 CAGR / 差异箭头等注释。</p>
@@ -99,6 +131,6 @@
   </details>
 </main>
 <script src="pyodide/pyodide.js"></script>
-<script src="taskpane.js"></script>
+<script src="taskpane.js?v=3"></script>
 </body>
 </html>

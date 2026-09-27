@@ -57,3 +57,26 @@ button:disabled { opacity: .5; cursor: default; }
 .spinner { width: 18px; height: 18px; border: 2px solid #E6C77A; border-top-color: #5C4400; border-radius: 50%; animation: spin 1s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 body:not(.ppt) .ppt-only, body:not(.xl) .xl-only, body:not(.web) .web-only { display: none !important; }
+
+.hide { display: none !important; }
+body.ppt .bar, body.xl .bar { display: none; }
+.banner { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #EAF2FB; color: #0B2D4F;
+  border: 1px solid #B9D5EC; border-radius: 8px; padding: 8px 10px; font-size: 12.5px; position: sticky; top: 0; z-index: 4; }
+.banner.editing { background: #FFF1EC; border-color: #F3C3B3; color: #7A2A12; }
+.gridbar { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+.grid { overflow: auto; max-height: 260px; border: 1px solid var(--line); border-radius: 5px; background: var(--card); }
+.grid table { border-collapse: collapse; font: 12px ui-monospace, Menlo, Consolas, monospace; }
+.grid td { border: 1px solid var(--line); padding: 0; min-width: 64px; }
+.grid td.rh { min-width: 22px; width: 22px; text-align: center; color: var(--muted); background: var(--bg); font-size: 10px; }
+.grid tr.hd td { background: var(--bg); font-weight: 700; }
+.grid input { border: 0; border-radius: 0; padding: 4px 6px; width: 100%; min-width: 64px; font: inherit; background: transparent; }
+.grid input:focus { outline: 2px solid var(--brand2); outline-offset: -2px; background: var(--card); }
+.grid tr.hd input { font-weight: 700; }
+.colors { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+.colors .ci, .swatches .ci { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+.colors input[type=color], .swatches input[type=color] { width: 26px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: none; }
+.colors .auto input[type=color] { opacity: .55; }
+.colors button.rs { padding: 0 4px; font-size: 11px; border: 0; color: var(--muted); }
+.themeed { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.swatches { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.grid3 { grid-template-columns: repeat(3, 1fr); }

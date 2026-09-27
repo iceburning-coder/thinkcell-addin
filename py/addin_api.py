@@ -20,7 +20,7 @@ def render(spec_json):
                       ensure_ascii=False)
 
 
-def render_pptx(spec_json, slide_w_in=13.333, slide_h_in=7.5):
+def render_pptx(spec_json, slide_w_in=13.333, slide_h_in=7.5, name=""):
     """→ base64 编码的单页 pptx（原生形状，可直接编辑），用于 insertSlidesFromBase64。"""
     from pptx import Presentation
     from pptx.util import Inches
@@ -31,7 +31,9 @@ def render_pptx(spec_json, slide_w_in=13.333, slide_h_in=7.5):
     margin = 0.35
     w = min(slide_w_in - 2 * margin, (slide_h_in - 2 * margin) * f.W / f.H)
     h = w * f.H / f.W
-    f.pptx(s, (slide_w_in - w) / 2, (slide_h_in - h) / 2, w_in=w)
+    grp = f.pptx(s, (slide_w_in - w) / 2, (slide_h_in - h) / 2, w_in=w)
+    if name:
+        grp.name = name
     bio = io.BytesIO()
     prs.save(bio)
     return base64.b64encode(bio.getvalue()).decode()

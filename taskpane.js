@@ -7,6 +7,9 @@ let HOST = "web";           // ppt | xl | web
 let PY = null, API = null, PPTX_READY = false;
 let LAST = null;            // {spec, svg, width, height, meta}
 let SEL_ADDRESS = null;     // Excel：读取选区的地址（原生图表用）
+let EDIT = null;            // 正在编辑的已插入图表 {name, id, slideId}
+let SEL_CHART = null;       // PowerPoint 当前选中的插件图表
+const PREFIX = "TC:";       // 插件图表的形状名前缀；图表设置存于文档 settings[形状名]
 
 // ------------------------------------------------------------------ 工具
 const store = {
@@ -50,6 +53,95 @@ function isoDate(s) {
   return `${m[1]}-${m[2].padStart(2, "0")}-${(m[3] || "1").padStart(2, "0")}`;
 }
 function excelDate(n) { const d = new Date(Math.round((n - 25569) * 86400000)); return d.toISOString().slice(0, 10); }
+
+// ------------------------------------------------------------------ 表格编辑器
+let GRID = [["", ""], ["", ""]];
+let CUR = { r: 1, c: 1 };
+function padGrid(g) {
+  const w = Math.max(2, ...g.map((r) => r.length));
+  g.forEach((r) => { while (r.length < w) r.push(""); });
+  while (g.length < 2) g.push(Array(w).fill(""));
+  return g;
+}
+function gridToText(g) {
+  let rows = g.map((r) => r.map((c) => String(c ?? "").replace(/[\t\n]/g, " ")));
+  while (rows.length && rows[rows.length - 1].every((c) => c.trim() === "")) rows.pop();
+  let w = Math.max(0, ...rows.map((r) => { let k = r.length; while (k && r[k - 1].trim() === "") k--; return k; }));
+  return rows.map((r) => r.slice(0, w).join("\t")).join("\n");
+}
+function setData(text, keepSel) {
+  $("data").value = text;
+  GRID = padGrid(parseGrid(text).map((r) => r.slice()));
+  if (!keepSel) SEL_ADDRESS = null;
+  renderGrid();
+}
+function renderGrid() {
+  const g = GRID;
+  const extraRow = g.concat([Array(g[0].length).fill("")]);   // 末尾空行：直接往下填
+  let h = "<table>";
+  extraRow.forEach((row, r) => {
+    h += `<tr class="${r === 0 ? "hd" : ""}"><td class="rh">${r === 0 ? "" : r}</td>`;
+    row.concat([""]).forEach((v, c) => {
+      h += `<td><input data-r="${r}" data-c="${c}" value="${esc(v)}"${r === 0 && c === 0 ? ' placeholder="表头"' : ""}></td>`;
+    });
+    h += "</tr>";
+  });
+  $("grid").innerHTML = h + "</table>";
+}
+function gridChanged() {
+  $("data").value = gridToText(GRID);
+  SEL_ADDRESS = null;
+  onDataChanged();
+}
+function ensureCell(r, c) {
+  while (GRID.length <= r) GRID.push(Array(GRID[0].length).fill(""));
+  if (GRID[0].length <= c) GRID.forEach((row) => { while (row.length <= c) row.push(""); });
+}
+function gridWire() {
+  const box = $("grid");
+  box.addEventListener("input", (e) => {
+    const el = e.target; if (!el.dataset.r) return;
+    const r = +el.dataset.r, c = +el.dataset.c;
+    const grow = r >= GRID.length || c >= GRID[0].length;
+    ensureCell(r, c); GRID[r][c] = el.value;
+    if (grow) { renderGrid(); const n = box.querySelector(`input[data-r="${r}"][data-c="${c}"]`); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } }
+    gridChanged();
+  });
+  box.addEventListener("focusin", (e) => { if (e.target.dataset.r) CUR = { r: +e.target.dataset.r, c: +e.target.dataset.c }; });
+  box.addEventListener("paste", (e) => {
+    const el = e.target; if (!el.dataset.r) return;
+    const txt = (e.clipboardData || window.clipboardData).getData("text");
+    if (!/[\t\n]/.test(txt.trim())) return;
+    e.preventDefault();
+    const block = txt.replace(/\r/g, "").replace(/\n$/, "").split("\n").map((l) => l.split("\t"));
+    const r0 = +el.dataset.r, c0 = +el.dataset.c;
+    block.forEach((row, i) => row.forEach((v, j) => { ensureCell(r0 + i, c0 + j); GRID[r0 + i][c0 + j] = v.trim(); }));
+    padGrid(GRID); renderGrid(); gridChanged();
+  });
+  box.addEventListener("keydown", (e) => {
+    const el = e.target; if (!el.dataset.r || e.key !== "Enter") return;
+    e.preventDefault();
+    const n = box.querySelector(`input[data-r="${+el.dataset.r + 1}"][data-c="${el.dataset.c}"]`);
+    if (n) n.focus();
+  });
+  document.querySelectorAll("[data-g]").forEach((b) => b.addEventListener("click", () => {
+    const a = b.dataset.g, w = GRID[0].length;
+    if (a === "addRow") GRID.splice(Math.max(CUR.r, 0) + 1, 0, Array(w).fill(""));
+    if (a === "addCol") GRID.forEach((row) => row.splice(CUR.c + 1, 0, ""));
+    if (a === "delRow" && GRID.length > 2 && CUR.r > 0 && CUR.r < GRID.length) GRID.splice(CUR.r, 1);
+    if (a === "delCol" && w > 2 && CUR.c < w) GRID.forEach((row) => row.splice(CUR.c, 1));
+    if (a === "transpose") GRID = padGrid(GRID[0].map((_, c) => GRID.map((row) => row[c])));
+    if (a === "clear") GRID = [["", ""], ["", ""]];
+    if (a === "text") {
+      const show = $("data").classList.contains("hide");
+      $("data").classList.toggle("hide", !show); $("grid").classList.toggle("hide", show);
+      b.textContent = show ? "表格" : "文本";
+      if (!show) setData($("data").value, true);
+      return;
+    }
+    renderGrid(); gridChanged();
+  }));
+}
 
 // ------------------------------------------------------------------ 图表类型定义
 // 数据约定：第一行表头；第一列为类目（除散点等）；其余列为系列
@@ -241,7 +333,7 @@ const TYPES = [
     opts: [{ k: "scale", t: "select", label: "主刻度", opts: [["month", "月"], ["quarter", "季"], ["week", "周"], ["year", "年"]] },
       { k: "sub_scale", t: "select", label: "次刻度", opts: [["", "无"], ["week", "周"], ["month", "月"]] },
       { k: "today", t: "check", label: "显示今天线", def: true }],
-    hint: "列：活动、开始、结束、[负责人]、[备注]、[状态 0-4]。结束留空 = 里程碑。日期如 2026-09-01。",
+    hint: "列：活动、开始、结束、[负责人]、[备注]、[状态 0-4]、[分组]。结束留空 = 里程碑。日期如 2026-09-01。分组决定颜色，可在「图例」里显示。",
     sample: "活动\t开始\t结束\t负责人\t备注\t状态\n数据收集\t2026-09-01\t2026-10-15\t张\t\t3\n专家访谈\t2026-09-20\t2026-11-10\t李\t\t1\n模型搭建\t2026-10-15\t2026-12-01\t王\t\t0\n中期汇报\t2026-11-05\t\t张\t\t\n报告撰写\t2026-11-20\t2026-12-22\t张\t含 PPT\t0",
     build(rows, h, o) {
       const items = rows.map((r) => {
@@ -251,6 +343,7 @@ const TYPES = [
         if (r[3]) it.owner = r[3];
         if (r[4]) it.remark = r[4];
         if (r[5] !== undefined && r[5] !== "") it.status = Number(r[5]);
+        if (r[6]) it.group = r[6];
         return it;
       });
       const ds = items.flatMap((i) => [i.start, i.end, i.milestone].filter(Boolean)).sort();
@@ -398,13 +491,22 @@ function buildSpec() {
   const { head, rows } = currentGrid();
   if (head.length < 2 && ty.id !== "gauge") throw new Error("至少需要两列（类目 + 数值）");
   if (!rows.length) throw new Error("没有数据行");
-  const spec = ty.build(rows, head, OPT);
+  const mag = Number($("mag").value || 1);
+  const spec = ty.build(mag > 1 && MAG_TYPES.has(ty.id) ? scaleRows(rows, mag) : rows, head, OPT);
   const [W, H] = $("size").value.split("x").map(Number);
   spec.size = [W, H];
   if ($("title").value.trim()) spec.title = $("title").value.trim();
   if ($("subtitle").value.trim()) spec.subtitle = $("subtitle").value.trim();
   if ($("source").value.trim()) spec.source = $("source").value.trim();
-  spec.theme = $("theme").value;
+  spec.theme = $("theme").value === "custom" ? Object.assign({ base: "consulting" }, customTheme()) : $("theme").value;
+  if (LEGEND_TYPES.has(spec.type)) {
+    if ($("legend").value !== "auto") spec.legend = $("legend").value;
+    if ($("legendRev").checked) spec.legend_reverse = true;
+  }
+  const names = seriesNames(spec);
+  const sc = {};
+  names.forEach((n) => { if (COLORS[n]) sc[n] = COLORS[n]; });
+  if (Object.keys(sc).length) spec.series_colors = sc;
   if ($("dec").value !== "" && !["pie", "pie_of_pie", "concentric", "table", "gantt", "gauge", "scatter", "bubble"].includes(spec.type)) spec.dec = Number($("dec").value);
   if (ty.anns) {
     const ann = annotations(spec, rows.length);
@@ -414,6 +516,88 @@ function buildSpec() {
     }
   }
   return spec;
+}
+
+const MAG_TYPES = new Set(["column", "waterfall", "line", "area", "combo", "pareto", "butterfly", "mekko", "pie", "pie_of_pie",
+  "concentric", "football", "candlestick"]);
+const LEGEND_TYPES = new Set(["column", "line", "area", "combo", "pareto", "mekko", "pie", "scatter", "bubble", "waterfall", "gantt"]);
+function scaleRows(rows, k) {
+  return rows.map((r) => r.map((c, j) => {
+    if (j === 0 || typeof c !== "string") return c;
+    const t = c.trim();
+    if (t === "" || /%$/.test(t) || /^e$/i.test(t)) return c;
+    const v = num(t);
+    return typeof v === "number" && !Number.isNaN(v) ? String(+(v / k).toPrecision(12)) : c;
+  }));
+}
+
+// ------------------------------------------------------------------ 颜色
+let COLORS = {};   // 系列名 → 颜色（用户指定）
+const PAL = {
+  consulting: ["#0B2D4F", "#1F5A8C", "#3F86C0", "#7FB2DC", "#B9D5EC"],
+  semi: ["#1F5A8C", "#A6A6A6", "#7FB2DC", "#595959", "#D9D9D9"],
+  dark: ["#5B9BD5", "#3F86C0", "#7FB2DC", "#B9D5EC", "#DDE9F5"],
+};
+const THEME_DEF = { SERIES: PAL.consulting.slice(), ACCENT: "#E4572E", OTHER: "#D9D9D9", POS: "#2E8B57", NEG: "#C0392B", TOTAL: "#0B2D4F" };
+function customTheme() { const t = store.get("customTheme", null); return t && t.SERIES ? t : JSON.parse(JSON.stringify(THEME_DEF)); }
+function curPalette() { const th = $("theme").value; return th === "custom" ? customTheme().SERIES : (PAL[th] || PAL.consulting); }
+function autoColors(n, cat) {
+  const s = curPalette();
+  if (cat) { const c = [s[0], s[2], "#8C8C8C", s[1], "#595959", s[3]]; return Array.from({ length: n }, (_, i) => c[i % c.length]); }
+  if ($("theme").value === "semi") return Array.from({ length: n }, (_, i) => s[i % s.length]);
+  if (n === 1) return [s[0]];
+  if (n <= s.length) return Array.from({ length: n }, (_, i) => s[Math.round(i * (s.length - 1) / (n - 1))]);
+  return Array.from({ length: n }, (_, i) => s.concat(["#595959", "#A6A6A6", "#D0D0D0", "#ED7D31", "#FFC000"])[i % 10]);
+}
+function seriesNames(spec) {
+  const t = spec.type;
+  if (["column", "line", "area", "mekko"].includes(t)) return Object.keys(spec.series || {});
+  if (t === "combo") return Object.keys(spec.bars).concat(Object.keys(spec.lines));
+  if (["pie", "pie_of_pie", "concentric"].includes(t)) return (spec.labels || []).map(String);
+  if (t === "waterfall") return spec.series_names || (spec.build_down ? ["组成", "合计"] : ["增加", "减少", "合计"]);
+  if (t === "butterfly") return [spec.left[0], spec.right[0]];
+  if (t === "scatter" || t === "bubble") return [...new Set((spec.points || []).map((p) => p.group).filter((g) => g != null))].map(String);
+  if (t === "gantt") return [...new Set((spec.rows || []).map((r) => r.group).filter((g) => g != null))].map(String);
+  return [];
+}
+let COLOR_KEY = "";
+function renderColors(spec) {
+  const names = spec ? seriesNames(spec) : [];
+  const key = $("theme").value + "|" + names.join("\u0001") + "|" + JSON.stringify(COLORS);
+  if (key === COLOR_KEY) return;
+  COLOR_KEY = key;
+  $("colorCard").style.display = names.length ? "" : "none";
+  const t = spec ? spec.type : "";
+  const wf = { "增加": "#2E8B57", "减少": "#C0392B", "合计": "#0B2D4F", "组成": "#3F86C0" };
+  const auto = autoColors(names.length, ["line", "scatter", "bubble"].includes(t));
+  $("colors").innerHTML = names.map((n, i) => {
+    const a = t === "waterfall" && !spec.series_names ? wf[n] : auto[i];
+    const v = COLORS[n] || a;
+    return `<span class="ci ${COLORS[n] ? "" : "auto"}"><input type="color" data-n="${esc(n)}" value="${v}">${esc(n)}${COLORS[n] ? `<button class="rs" data-rs="${esc(n)}" title="恢复自动">↺</button>` : ""}</span>`;
+  }).join("");
+}
+function colorsWire() {
+  $("colors").addEventListener("input", (e) => { const n = e.target.dataset.n; if (!n) return; COLORS[n] = e.target.value; schedule(); });
+  $("colors").addEventListener("change", () => { COLOR_KEY = ""; render(); });
+  $("colors").addEventListener("click", (e) => { const n = e.target.dataset.rs; if (!n) return; delete COLORS[n]; COLOR_KEY = ""; render(); });
+}
+function renderThemeEditor() {
+  const on = $("theme").value === "custom";
+  $("themeEd").classList.toggle("hide", !on);
+  if (!on) return;
+  const t = customTheme();
+  const items = t.SERIES.map((c, i) => [`SERIES.${i}`, `系列 ${i + 1}${i === 0 ? "（最深）" : ""}`, c])
+    .concat([["ACCENT", "强调色", t.ACCENT], ["OTHER", "其他（灰）", t.OTHER], ["POS", "瀑布·增加", t.POS], ["NEG", "瀑布·减少", t.NEG], ["TOTAL", "合计", t.TOTAL]]);
+  $("themeSw").innerHTML = items.map(([k, l, c]) => `<span class="ci"><input type="color" data-tk="${k}" value="${c}">${l}</span>`).join("");
+}
+function themeWire() {
+  $("themeSw").addEventListener("input", (e) => {
+    const k = e.target.dataset.tk; if (!k) return;
+    const t = customTheme();
+    if (k.startsWith("SERIES.")) t.SERIES[+k.split(".")[1]] = e.target.value; else t[k] = e.target.value;
+    store.set("customTheme", t); COLOR_KEY = ""; schedule();
+  });
+  $("btnThemeReset").onclick = () => { store.set("customTheme", null); renderThemeEditor(); COLOR_KEY = ""; render(); };
 }
 
 // ------------------------------------------------------------------ 渲染
@@ -426,6 +610,7 @@ async function render(fromJson) {
     else if ($("jsonLock").checked) spec = JSON.parse($("json").value);
     else { spec = buildSpec(); $("json").value = JSON.stringify(spec, null, 1); }
   } catch (e) { $("dataErr").textContent = e.message; return; }
+  renderColors(spec);
   saveState();
   if (!API) return;
   try {
@@ -477,7 +662,7 @@ function svgToPngDataUrl(svg, w, h, scale = 2) {
     img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
   });
 }
-async function pptxB64() { await ensurePptx(); const r = $("slideRatio") ? $("slideRatio").value : "16:9"; const [w, h] = r === "4:3" ? [10, 7.5] : [13.333, 7.5]; return API.render_pptx(JSON.stringify(LAST.spec), w, h); }
+async function pptxB64(name) { await ensurePptx(); const r = $("slideRatio") ? $("slideRatio").value : "16:9"; const [w, h] = r === "4:3" ? [10, 7.5] : [13.333, 7.5]; return API.render_pptx(JSON.stringify(LAST.spec), w, h, name || ""); }
 function b64ToBlob(b64, type) { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type }); }
 
 // ------------------------------------------------------------------ Office：PowerPoint
@@ -485,19 +670,78 @@ function svgForOffice() { return LAST.svg; }
 function setSelectedAsync(data, opts) {
   return new Promise((res, rej) => Office.context.document.setSelectedDataAsync(data, opts, (r) => (r.status === Office.AsyncResultStatus.Succeeded ? res() : rej(r.error))));
 }
-async function pptInsertSvg() {
-  const wPt = 640, hPt = wPt * LAST.height / LAST.width;
+// ---- 文档内存储：每张插件图表的面板设置存进文档 settings（随文件走），键 = 形状名
+function docSettings() { try { return Office.context.document.settings; } catch (e) { return null; } }
+function saveChartState(name, state) {
+  const st = docSettings(); if (!st) return Promise.resolve();
+  st.set(name, state);
+  return new Promise((res) => st.saveAsync(() => res()));
+}
+function getChartState(name) { const st = docSettings(); return st ? st.get(name) : null; }
+function newChartName() { return PREFIX + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function fitBox(frame, W, H) {
+  let w = frame.width, h = w * H / W;
+  if (h > frame.height) { h = frame.height; w = h * W / H; }
+  return { left: frame.left + (frame.width - w) / 2, top: frame.top + (frame.height - h) / 2, width: w, height: h };
+}
+async function pptSnapshot(ctx) {
+  const sl = ctx.presentation.getSelectedSlides(); sl.load("items/id"); await ctx.sync();
+  if (!sl.items.length) throw new Error("请先在左侧选中一张幻灯片");
+  const slide = sl.items[0];
+  slide.shapes.load("items/id"); await ctx.sync();
+  return { slide, ids: new Set(slide.shapes.items.map((x) => x.id)) };
+}
+async function pptTagNew(snap, name) {
+  // 找到刚插入的形状并命名、打标签
+  return PowerPoint.run(async (ctx) => {
+    const slide = ctx.presentation.slides.getItem(snap.slide.id);
+    slide.shapes.load("items/id,items/name"); await ctx.sync();
+    const added = slide.shapes.items.filter((x) => !snap.ids.has(x.id));
+    const shp = added[added.length - 1];
+    if (!shp) return null;
+    shp.name = name;
+    try { shp.tags.add("TCCHART", "1"); } catch (e) { /* 旧版本无 tags */ }
+    await ctx.sync();
+    return shp.id;
+  });
+}
+async function pptInsertAt(box) {
+  const opts = { imageLeft: box.left, imageTop: box.top, imageWidth: box.width, imageHeight: box.height };
   try {
-    await setSelectedAsync(svgForOffice(), { coercionType: Office.CoercionType.XmlSvg, imageLeft: 40, imageTop: 40, imageWidth: wPt, imageHeight: hPt });
+    await setSelectedAsync(svgForOffice(), Object.assign({ coercionType: Office.CoercionType.XmlSvg }, opts));
+    return true;
   } catch (e) {
     const png = await svgToPngDataUrl(LAST.svg, LAST.width, LAST.height, 3);
-    await setSelectedAsync(png.split(",")[1], { coercionType: Office.CoercionType.Image, imageLeft: 40, imageTop: 40, imageWidth: wPt, imageHeight: hPt });
-    return "已插入为图片（此版本 PowerPoint 不支持 SVG）";
+    await setSelectedAsync(png.split(",")[1], Object.assign({ coercionType: Office.CoercionType.Image }, opts));
+    return false;
   }
-  return "已插入。右键 →「转换为形状」可逐个编辑";
+}
+async function pptInsertSvg() {
+  let frame = null, delId = null, snap = null;
+  await PowerPoint.run(async (ctx) => {
+    snap = await pptSnapshot(ctx);
+    try {   // 选中了一个普通形状/占位符 → 图放进它的位置；若它是空的，顺便替换掉
+      const sel = ctx.presentation.getSelectedShapes();
+      sel.load("items/id,items/name,items/left,items/top,items/width,items/height"); await ctx.sync();
+      if (sel.items.length === 1 && !String(sel.items[0].name).startsWith(PREFIX)) {
+        const x = sel.items[0];
+        frame = { left: x.left, top: x.top, width: x.width, height: x.height };
+        try { const tf = x.textFrame; tf.load("hasText"); await ctx.sync(); if (!tf.hasText) delId = x.id; } catch (e) { /* 图片等无文本框 */ }
+        if (delId) { x.delete(); await ctx.sync(); snap.ids.delete(delId); }
+      }
+    } catch (e) { /* 低版本不支持 getSelectedShapes */ }
+  });
+  const box = frame ? fitBox(frame, LAST.width, LAST.height) : { left: 40, top: 40, width: 640, height: 640 * LAST.height / LAST.width };
+  const svgOk = await pptInsertAt(box);
+  const name = newChartName();
+  const id = await pptTagNew(snap, name);
+  if (id) await saveChartState(name, panelState());
+  const where = frame ? (delId ? "已替换所选占位符" : "已放入所选形状的位置") : "已插入";
+  return `${where}${svgOk ? "" : "（为图片，此版本不支持 SVG）"}。以后选中它可「载入编辑」`;
 }
 async function pptInsertSlide() {
-  const b64 = await pptxB64();
+  const name = newChartName();
+  const b64 = await pptxB64(name);
   await PowerPoint.run(async (ctx) => {
     const sel = ctx.presentation.getSelectedSlides();
     sel.load("items/id");
@@ -507,12 +751,76 @@ async function pptInsertSlide() {
     ctx.presentation.insertSlidesFromBase64(b64, opt);
     await ctx.sync();
   });
+  await saveChartState(name, panelState());
   return "已作为新幻灯片插入（全部为可编辑形状）";
+}
+// ---- 选中图表 → 载入编辑 → 更新
+async function pptSelectionChanged() {
+  if (HOST !== "ppt") return;
+  try {
+    await PowerPoint.run(async (ctx) => {
+      const sel = ctx.presentation.getSelectedShapes();
+      sel.load("items/id,items/name"); await ctx.sync();
+      const sl = ctx.presentation.getSelectedSlides(); sl.load("items/id"); await ctx.sync();
+      const x = sel.items.length === 1 ? sel.items[0] : null;
+      SEL_CHART = x && String(x.name).startsWith(PREFIX) && getChartState(x.name)
+        ? { id: x.id, name: x.name, slideId: sl.items[0] && sl.items[0].id } : null;
+    });
+  } catch (e) { SEL_CHART = null; }
+  showBanner();
+}
+function showBanner() {
+  const b = $("editBanner");
+  if (EDIT) {
+    b.classList.remove("hide"); b.classList.add("editing");
+    $("editMsg").textContent = "正在编辑：" + (EDIT.title || "图表") + "（改完点「更新所选图表」）";
+    $("btnLoadSel").classList.add("hide"); $("btnNewChart").classList.remove("hide");
+  } else if (SEL_CHART) {
+    const st = getChartState(SEL_CHART.name) || {};
+    b.classList.remove("hide", "editing");
+    $("editMsg").textContent = "已选中图表：" + (st.title || "未命名");
+    $("btnLoadSel").classList.remove("hide"); $("btnNewChart").classList.add("hide");
+  } else b.classList.add("hide");
+  $("btnUpdate").classList.toggle("hide", !EDIT || HOST !== "ppt");
+  $("btnUpdateXl").classList.toggle("hide", !EDIT || HOST !== "xl");
+}
+function loadSelectedChart() {
+  if (!SEL_CHART) return;
+  const st = getChartState(SEL_CHART.name);
+  if (!st) return;
+  EDIT = Object.assign({}, SEL_CHART, { title: st.title });
+  applyState(st); render(); showBanner();
+  status("已载入所选图表的数据和设置", "ok");
+}
+function endEdit(restore) {
+  EDIT = null;
+  if (restore) loadState();
+  showBanner(); render();
+}
+async function pptUpdate() {
+  if (!EDIT) throw new Error("没有正在编辑的图表");
+  let old = null, snap = null;
+  await PowerPoint.run(async (ctx) => {
+    const slide = ctx.presentation.slides.getItem(EDIT.slideId);
+    const shp = slide.shapes.getItem(EDIT.id);
+    shp.load("left,top,width,height"); await ctx.sync();
+    old = { left: shp.left, top: shp.top, width: shp.width, height: shp.height };
+    shp.delete(); await ctx.sync();
+    slide.shapes.load("items/id"); await ctx.sync();
+    snap = { slide: { id: EDIT.slideId }, ids: new Set(slide.shapes.items.map((x) => x.id)) };
+  });
+  const box = { left: old.left, top: old.top, width: old.width, height: old.width * LAST.height / LAST.width };
+  await pptInsertAt(box);
+  const id = await pptTagNew(snap, EDIT.name);
+  await saveChartState(EDIT.name, panelState());
+  EDIT.id = id; EDIT.title = $("title").value;
+  showBanner();
+  return "已在原位置更新（宽度保持不变）";
 }
 
 // ------------------------------------------------------------------ Office：Excel
 async function xlInsertSvg() {
-  const wPx = 560;
+  const wPx = 560, name = newChartName();
   await Excel.run(async (ctx) => {
     const sh = ctx.workbook.worksheets.getActiveWorksheet();
     const r = ctx.workbook.getSelectedRange(); r.load("left,top,width");
@@ -522,10 +830,52 @@ async function xlInsertSvg() {
     catch (e) { const png = await svgToPngDataUrl(LAST.svg, LAST.width, LAST.height, 3); shp = sh.shapes.addImage(png.split(",")[1]); }
     shp.lockAspectRatio = true;
     shp.left = r.left + r.width + 12; shp.top = r.top; shp.width = wPx;
-    shp.name = "tc_" + Date.now();
+    shp.name = name;
+    try { shp.altTextDescription = LAST.spec.title || "think-cell 风格图表"; } catch (e) { /* 忽略 */ }
     await ctx.sync();
   });
-  return "已插入到选区右侧";
+  await saveChartState(name, panelState());
+  await xlRefreshList(name);
+  return "已插入到选区右侧。以后在「本表图表」里选中它即可编辑";
+}
+async function xlRefreshList(selectName) {
+  if (HOST !== "xl") return;
+  try {
+    await Excel.run(async (ctx) => {
+      const sh = ctx.workbook.worksheets.getActiveWorksheet();
+      sh.shapes.load("items/name"); await ctx.sync();
+      const items = sh.shapes.items.filter((x) => String(x.name).startsWith(PREFIX) && getChartState(x.name));
+      const cur = selectName !== undefined ? selectName : $("xlCharts").value;
+      $("xlCharts").innerHTML = '<option value="">（新建）</option>' + items.map((x) => {
+        const st = getChartState(x.name) || {};
+        return `<option value="${esc(x.name)}">${esc(st.title || x.name)}</option>`;
+      }).join("");
+      if ([...$("xlCharts").options].some((o) => o.value === cur)) $("xlCharts").value = cur;
+    });
+  } catch (e) { /* 忽略 */ }
+}
+function xlPick(name) {
+  if (!name) { if (EDIT) endEdit(true); return; }
+  const st = getChartState(name); if (!st) return;
+  EDIT = { name, title: st.title };
+  applyState(st); render(); showBanner();
+}
+async function xlUpdate() {
+  if (!EDIT) throw new Error("没有正在编辑的图表");
+  await Excel.run(async (ctx) => {
+    const sh = ctx.workbook.worksheets.getActiveWorksheet();
+    const old = sh.shapes.getItem(EDIT.name); old.load("left,top,width"); await ctx.sync();
+    const L = old.left, Tp = old.top, Wd = old.width;
+    old.delete();
+    let shp;
+    try { shp = sh.shapes.addSvg(LAST.svg); }
+    catch (e) { const png = await svgToPngDataUrl(LAST.svg, LAST.width, LAST.height, 3); shp = sh.shapes.addImage(png.split(",")[1]); }
+    shp.lockAspectRatio = true; shp.left = L; shp.top = Tp; shp.width = Wd; shp.name = EDIT.name;
+    await ctx.sync();
+  });
+  await saveChartState(EDIT.name, panelState());
+  EDIT.title = $("title").value; showBanner(); xlRefreshList(EDIT.name);
+  return "已在原位置更新";
 }
 const XL_TYPE = { stacked: "ColumnStacked", clustered: "ColumnClustered", "100": "ColumnStacked100" };
 function xlChartType(spec) {
@@ -590,7 +940,7 @@ async function xlReadSelection() {
       if (typeof v === "number" && /%/.test(nf)) return +(v * 100).toFixed(6) + "%";
       return v;
     }).join("\t"));
-    $("data").value = lines.join("\n");
+    setData(lines.join("\n"));
     SEL_ADDRESS = r.address;
   });
   renderOpts(); schedule();
@@ -598,46 +948,64 @@ async function xlReadSelection() {
 }
 
 // ------------------------------------------------------------------ 状态保存
-function saveState() {
-  store.set("state", { type: $("type").value, data: $("data").value, title: $("title").value, subtitle: $("subtitle").value,
-    source: $("source").value, theme: $("theme").value, dec: $("dec").value, size: $("size").value, opt: OPT, ann: ANN });
+function panelState() {
+  return { v: 2, type: $("type").value, data: $("data").value, title: $("title").value, subtitle: $("subtitle").value,
+    source: $("source").value, theme: $("theme").value, dec: $("dec").value, size: $("size").value, legend: $("legend").value,
+    legendRev: $("legendRev").checked, mag: $("mag").value, opt: OPT, ann: ANN, colors: COLORS,
+    json: $("jsonLock").checked ? $("json").value : null, sel: SEL_ADDRESS };
 }
-function loadState() {
-  const s = store.get("state", null);
+function saveState() { if (!EDIT) store.set("state", panelState()); }
+function applyState(s) {
   if (!s || !T[s.type]) return false;
-  $("type").value = s.type; $("data").value = s.data || T[s.type].sample;
-  ["title", "subtitle", "source", "theme", "dec", "size"].forEach((k) => { if (s[k] !== undefined) $(k).value = s[k]; });
-  OPT = s.opt || {}; ANN = s.ann || {};
+  $("type").value = s.type;
+  ["title", "subtitle", "source", "theme", "dec", "size", "legend", "mag"].forEach((k) => { if (s[k] !== undefined && s[k] !== null) $(k).value = s[k]; });
+  $("legendRev").checked = !!s.legendRev;
+  OPT = s.opt || {}; ANN = s.ann || {}; COLORS = s.colors || {};
+  setData(s.data || T[s.type].sample);
+  SEL_ADDRESS = s.sel || null;
+  $("jsonLock").checked = !!s.json;
+  if (s.json) $("json").value = s.json;
+  COLOR_KEY = ""; renderThemeEditor(); renderOpts();
   return true;
 }
+function loadState() { return applyState(store.get("state", null)); }
 
 // ------------------------------------------------------------------ 启动
+const act = (fn, needChart = true) => async () => {
+  if (needChart && !LAST) return;
+  setBusy(true); status("处理中…");
+  try { const msg = await fn(); status(msg || "完成", "ok"); }
+  catch (e) { status("失败：" + (e.message || e.code || e), "bad"); console.error(e); }
+  finally { setBusy(false); }
+};
 function wire() {
   $("type").innerHTML = TYPES.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
-  if (!loadState()) { $("type").value = "column"; $("data").value = T.column.sample; $("title").value = "Chiller 市场 4 年复合增长 8.6%"; $("subtitle").value = "全球市场规模，亿美元"; ANN = { cagr0: "0", cagr1: "4" }; }
+  gridWire(); colorsWire(); themeWire();
+  if (!loadState()) { $("type").value = "column"; setData(T.column.sample); $("title").value = "Chiller 市场 4 年复合增长 8.6%"; $("subtitle").value = "全球市场规模，亿美元"; ANN = { cagr0: "0", cagr1: "4" }; }
   $("type").addEventListener("change", () => {
     OPT = {}; ANN = {}; SEL_ADDRESS = null;
     const cur = parseGrid($("data").value);
-    if (!cur.length || TYPES.some((t) => t.sample === $("data").value)) $("data").value = T[$("type").value].sample;
+    if (!cur.length || TYPES.some((t) => t.sample === $("data").value)) setData(T[$("type").value].sample);
+    COLORS = {};
     renderOpts(); schedule();
   });
-  $("data").addEventListener("input", () => { SEL_ADDRESS = null; debounce(() => { renderOpts(); }, 400)(); schedule(); });
+  $("data").addEventListener("input", () => { GRID = padGrid(parseGrid($("data").value)); SEL_ADDRESS = null; onDataChanged(); });
   ["title", "subtitle", "source"].forEach((k) => $(k).addEventListener("input", schedule));
-  ["theme", "dec", "size"].forEach((k) => $(k).addEventListener("change", schedule));
-  $("btnSample").onclick = () => { $("data").value = T[$("type").value].sample; SEL_ADDRESS = null; renderOpts(); schedule(); };
+  ["dec", "size", "legend", "mag", "legendRev"].forEach((k) => $(k).addEventListener("change", schedule));
+  $("theme").addEventListener("change", () => { COLOR_KEY = ""; renderThemeEditor(); schedule(); });
+  $("btnSample").onclick = () => { setData(T[$("type").value].sample); COLORS = {}; renderOpts(); schedule(); };
+  $("btnLoadSel").onclick = () => loadSelectedChart();
+  $("btnNewChart").onclick = () => endEdit(true);
+  $("btnUpdate").onclick = act(pptUpdate);
+  $("btnUpdateXl").onclick = act(xlUpdate);
+  $("xlCharts").addEventListener("mousedown", () => xlRefreshList());
+  $("xlCharts").addEventListener("change", () => xlPick($("xlCharts").value));
   $("btnJson").onclick = () => render(true);
-  const act = (fn) => async () => {
-    if (!LAST) return;
-    setBusy(true); status("处理中…");
-    try { const msg = await fn(); status(msg || "完成", "ok"); }
-    catch (e) { status("失败：" + (e.message || e.code || e), "bad"); console.error(e); }
-    finally { setBusy(false); }
-  };
   $("btnSvgPpt").onclick = act(pptInsertSvg);
   $("btnSlide").onclick = act(pptInsertSlide);
   $("btnSvgXl").onclick = act(xlInsertSvg);
   $("btnNative").onclick = act(xlInsertNative);
-  $("btnSel").onclick = act(xlReadSelection);
+  $("btnSel").onclick = act(xlReadSelection, false);
   $("btnDlSvg").onclick = act(async () => { download(fileBase() + ".svg", new Blob([LAST.svg], { type: "image/svg+xml" })); return "已下载 SVG"; });
   $("btnDlPng").onclick = act(async () => { const u = await svgToPngDataUrl(LAST.svg, LAST.width, LAST.height, 3); download(fileBase() + ".png", b64ToBlob(u.split(",")[1], "image/png")); return "已下载 PNG"; });
   $("btnDlPptx").onclick = act(async () => { download(fileBase() + ".pptx", b64ToBlob(await pptxB64(), "application/vnd.openxmlformats-officedocument.presentationml.presentation")); return "已下载 PPTX"; });
@@ -645,9 +1013,11 @@ function wire() {
   const r = document.createElement("select"); r.id = "slideRatio"; r.innerHTML = '<option value="16:9">目标幻灯片 16:9</option><option value="4:3">目标幻灯片 4:3</option>';
   r.value = store.get("ratio", "16:9"); r.onchange = () => store.set("ratio", r.value);
   $("btnSlide").after(r);
+  renderThemeEditor();
   renderOpts();
   setBusy(true);
 }
+const onDataChanged = (() => { const o = debounce(() => renderOpts(), 400); return () => { o(); schedule(); }; })();
 function setHost(h) {
   HOST = h;
   document.body.classList.remove("ppt", "xl", "web");
@@ -661,8 +1031,11 @@ let hostSet = false;
 if (window.Office && Office.onReady) {
   Office.onReady((info) => {
     hostSet = true;
-    if (info.host === Office.HostType.PowerPoint) setHost("ppt");
-    else if (info.host === Office.HostType.Excel) setHost("xl");
+    if (info.host === Office.HostType.PowerPoint) {
+      setHost("ppt");
+      try { Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, () => pptSelectionChanged()); } catch (e) { /* 忽略 */ }
+      pptSelectionChanged();
+    } else if (info.host === Office.HostType.Excel) { setHost("xl"); xlRefreshList(); }
   });
 }
 initPy();
