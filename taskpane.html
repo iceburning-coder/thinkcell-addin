@@ -6,7 +6,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=Edge">
 <title>think-cell 风格图表</title>
 <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-<link rel="stylesheet" href="taskpane.css?v=3">
+<link rel="stylesheet" href="taskpane.css?v=4">
 </head>
 <body>
 <header class="bar">
@@ -49,6 +49,8 @@
       <button class="ghost" data-g="transpose" title="行列互换">转置</button>
       <button class="ghost" data-g="clear" title="清空">清空</button>
       <button class="ghost" data-g="text" title="切换为文本编辑">文本</button>
+      <button class="ghost" data-g="copyData" title="复制为表格，可直接 ⌘V 到 Excel">复制数据</button>
+      <button class="ghost" data-g="copyChart" title="复制整张图（类型 + 数据 + 设置），到 PPT / Excel 的面板里任意格子 ⌘V">复制图表</button>
     </div>
     <div id="grid" class="grid"></div>
     <textarea id="data" spellcheck="false" rows="7" class="hide"></textarea>
@@ -65,7 +67,7 @@
       <label><span>小数位</span>
         <select id="dec"><option value="">自动</option><option>0</option><option>1</option><option>2</option></select></label>
       <label><span>尺寸</span>
-        <select id="size"><option value="680x400">宽 16:9</option><option value="680x480">标准</option><option value="480x400">半页</option><option value="680x300">矮条</option><option value="560x560">方形</option></select></label>
+        <select id="size"><option value="680x400">宽 16:9</option><option value="680x480">标准</option><option value="480x400">半页</option><option value="680x300">矮条</option><option value="560x560">方形</option><option value="760x520">高（甘特 / 表格）</option><option value="960x540">大 16:9</option></select></label>
       <label><span>图例</span>
         <select id="legend"><option value="auto">自动</option><option value="label">标在图上</option><option value="top">顶部</option><option value="bottom">底部</option><option value="side">右侧竖排</option><option value="none">不显示</option></select></label>
       <label><span>数量级</span>
@@ -106,14 +108,15 @@
       <button id="btnUpdate" class="primary hide">更新所选图表</button>
       <button id="btnSvgPpt" class="primary">插入到当前页</button>
       <button id="btnSlide">作为新幻灯片插入（可编辑形状）</button>
-      <p class="hint">以后选中这张图，面板会提示「载入编辑」，改完点「更新所选图表」即在原位置替换。先选中一个形状或占位符再插入，图会放进它的位置。右键 →「转换为形状」可逐个编辑（转换后不再能用面板更新）。</p>
+      <p class="hint">以后选中这张图，面板会提示「载入编辑」，改完点「更新所选图表」即在原位置替换。先选中一个形状或占位符再插入，图会放进它的位置。右键 →「转换为形状」可逐个编辑（转换后不再能用面板更新）。<br>和 Excel 互通：在 Excel 里选中数据 ⌘C，到这里任意格子 ⌘V；或在 Excel 面板点「复制图表」，到这里 ⌘V 带过来整张图。改好的数据用「复制数据」可贴回 Excel。</p>
     </div>
     <div class="xl-only">
       <label class="row"><span>本表图表</span><select id="xlCharts"><option value="">（新建）</option></select></label>
       <button id="btnUpdateXl" class="primary hide">更新所选图表</button>
       <button id="btnSvgXl" class="primary">插入图表（高保真）</button>
       <button id="btnNative">插入 Excel 原生图表（可改数据）</button>
-      <p class="hint">原生图表可随单元格数据更新，但没有 CAGR / 差异箭头等注释。</p>
+      <button id="btnWriteXl">把面板数据写入所选单元格</button>
+      <p class="hint">链接：先「读取选区」或「把面板数据写入所选单元格」，再插入高保真图，图就和这些单元格链接（列表里带 🔗）——改单元格，图自动重画；在面板里改数据再点「更新」，会写回单元格。自动更新需要面板开着。<br>和 PPT 互通：点数据区的「复制图表」，到 PPT 面板任意格子 ⌘V，整张图（类型、数据、设置）就过去了；反过来也一样。</p>
     </div>
     <div class="web-only">
       <button id="btnDlSvg" class="primary">下载 SVG</button>
@@ -131,6 +134,6 @@
   </details>
 </main>
 <script src="pyodide/pyodide.js"></script>
-<script src="taskpane.js?v=3"></script>
+<script src="taskpane.js?v=4"></script>
 </body>
 </html>

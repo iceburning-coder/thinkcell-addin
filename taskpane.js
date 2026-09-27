@@ -9,7 +9,8 @@ let LAST = null;            // {spec, svg, width, height, meta}
 let SEL_ADDRESS = null;     // Excel：读取选区的地址（原生图表用）
 let EDIT = null;            // 正在编辑的已插入图表 {name, id, slideId}
 let SEL_CHART = null;       // PowerPoint 当前选中的插件图表
-const PREFIX = "TC:";       // 插件图表的形状名前缀；图表设置存于文档 settings[形状名]
+const PREFIX = "TC:";
+const DEMO_TITLE = "Chiller 市场 4 年复合增长 8.6%";       // 插件图表的形状名前缀；图表设置存于文档 settings[形状名]
 
 // ------------------------------------------------------------------ 工具
 const store = {
@@ -111,6 +112,7 @@ function gridWire() {
   box.addEventListener("paste", (e) => {
     const el = e.target; if (!el.dataset.r) return;
     const txt = (e.clipboardData || window.clipboardData).getData("text");
+    if (pasteChart(txt)) { e.preventDefault(); return; }
     if (!/[\t\n]/.test(txt.trim())) return;
     e.preventDefault();
     const block = txt.replace(/\r/g, "").replace(/\n$/, "").split("\n").map((l) => l.split("\t"));
@@ -126,6 +128,8 @@ function gridWire() {
   });
   document.querySelectorAll("[data-g]").forEach((b) => b.addEventListener("click", () => {
     const a = b.dataset.g, w = GRID[0].length;
+    if (a === "copyData") { copyText(gridToText(GRID)).then((ok) => status(ok ? "已复制表格数据：到 Excel 里选一个单元格 ⌘V 即可" : "复制失败，请切到「文本」后手动全选复制", ok ? "ok" : "bad")); return; }
+    if (a === "copyChart") { copyText(chartPayload()).then((ok) => status(ok ? "已复制整张图：到另一个程序（PPT / Excel）的面板里，点任意表格格子 ⌘V" : "复制失败", ok ? "ok" : "bad")); return; }
     if (a === "addRow") GRID.splice(Math.max(CUR.r, 0) + 1, 0, Array(w).fill(""));
     if (a === "addCol") GRID.forEach((row) => row.splice(CUR.c + 1, 0, ""));
     if (a === "delRow" && GRID.length > 2 && CUR.r > 0 && CUR.r < GRID.length) GRID.splice(CUR.r, 1);
@@ -141,6 +145,109 @@ function gridWire() {
     }
     renderGrid(); gridChanged();
   }));
+}
+
+// ---- 剪贴板：复制数据 / 复制整张图（PPT ↔ Excel 互通）
+const PAYLOAD = "TCCHART1:";
+function copyText(txt) {
+  const fallback = () => {
+    const ta = document.createElement("textarea"); ta.value = txt; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    let ok = false; try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    ta.remove(); return ok;
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(txt).then(() => true, () => fallback());
+  return Promise.resolve(fallback());
+}
+function chartPayload() {
+  const st = panelState(); st.sel = null; st.src = HOST;
+  return PAYLOAD + btoa(unescape(encodeURIComponent(JSON.stringify(st))));
+}
+function pasteChart(txt) {
+  txt = String(txt || "").trim();
+  if (!txt.startsWith(PAYLOAD)) return false;
+  try {
+    const st = JSON.parse(decodeURIComponent(escape(atob(txt.slice(PAYLOAD.length)))));
+    if (!applyState(st)) throw new Error("格式不对");
+    SEL_ADDRESS = null; render();
+    status(EDIT ? "已载入复制来的图表，点「更新所选图表」替换" : "已载入复制来的图表，可直接插入", "ok");
+  } catch (e) { status("粘贴的图表无法识别：" + e.message, "bad"); }
+  return true;
+}
+
+// ------------------------------------------------------------------ 甘特数据解析（按表头识别列）
+const GANTT_COLS = {
+  name: /^(活动|任务|事项|名称|activity|task|name|item)$/i, start: /^(开始|开始日期|起始|日期|start|date|from)$/i,
+  end: /^(结束|结束日期|截止|完成|end|finish|to|due)$/i, label: /^(标签|文字|说明文字|里程碑|label|milestone|text)$/i,
+  style: /^(样式|类型|形状|style|type|shape)$/i, owner: /^(负责人|责任人|owner|responsible|resp\.?)$/i,
+  remark: /^(备注|说明|remark|remarks|note|notes|comment)$/i, status: /^(状态|进度|status|progress)$/i,
+  group: /^(分组|组|颜色|group|color|colour|category)$/i, section: /^(阶段|分段|板块|section|phase|stage)$/i,
+};
+function ganttCols(h) {
+  const idx = {};
+  h.forEach((x, j) => { const v = String(x || "").trim(); for (const k in GANTT_COLS) if (idx[k] === undefined && GANTT_COLS[k].test(v)) { idx[k] = j; break; } });
+  if (idx.name === undefined || idx.start === undefined) {   // 旧格式：按位置
+    return { name: 0, start: 1, end: 2, owner: 3, remark: 4, status: 5, group: 6 };
+  }
+  return idx;
+}
+function ganttSpec(rows, h, o) {
+  const ix = ganttCols(h);
+  const get = (r, k) => (ix[k] === undefined ? "" : String(r[ix[k]] ?? "").trim());
+  const items = [], milestones = [], shades = [];
+  let d0 = null, d1 = null, pendingSep = false, lastSection = null, cur = null;
+  rows.forEach((r) => {
+    const name = get(r, "name");
+    if (/^[-—–_]{2,}$/.test(name)) { pendingSep = true; return; }
+    const toks = get(r, "style").toLowerCase().split(/[\s,，、/;；]+/).filter(Boolean);
+    const has = (re) => toks.some((x) => re.test(x));
+    const sRaw = get(r, "start"), eRaw = get(r, "end"), label = get(r, "label");
+    if (!sRaw) {
+      if (name && !eRaw) { cur = { name, sep: pendingSep, items: [] }; pendingSep = false; fillMeta(cur, r); items.push(cur); }
+      return;
+    }
+    const st = isoDate(sRaw), en = eRaw ? isoDate(eRaw) : null;
+    if (has(/^(范围|range|轴|axis)$/)) { d0 = st; if (en) d1 = en; return; }
+    if (has(/^(底纹|shade|排他|假期|holiday|冻结|freeze)$/) && en) { shades.push({ start: st, end: en, text: label || name }); return; }
+    if (has(/^(竖线|全局|line|global|vline)$/)) { milestones.push({ name: label || name, date: st }); return; }
+    const pos = has(/^(左|left)$/) ? "left" : has(/^(上|above|top)$/) ? "above" : has(/^(下|below|bottom)$/) ? "below" : has(/^(中|center|inside|内)$/) ? "center" : has(/^(右|right)$/) ? "right" : null;
+    const shape = has(/^(三角|triangle)$/) ? "triangle" : has(/^(圆|circle)$/) ? "circle" : has(/^(方|square)$/) ? "square" : has(/^(星|star)$/) ? "star" : "diamond";
+    const it = en ? { start: st, end: en, style: has(/^(虚线|dashed|dash|计划|plan)$/) ? "dashed" : "solid" } : { date: st, shape };
+    if (label) it.label = label;
+    if (pos) { if (en) it.label_pos = pos; else it.pos = pos; }
+    if (!name && cur) { cur.items.push(it); return; }
+    const sec = get(r, "section");
+    cur = { name: name || "", items: [it], sep: pendingSep || (sec !== "" && lastSection !== null && sec !== lastSection) };
+    if (sec !== "") lastSection = sec;
+    pendingSep = false;
+    fillMeta(cur, r);
+    items.push(cur);
+  });
+  function fillMeta(x, r) {
+    const ow = get(r, "owner"), rm = get(r, "remark"), stv = get(r, "status"), g = get(r, "group");
+    if (ow) x.owner = ow;
+    if (rm) x.remark = rm;
+    if (stv !== "") x.status = /^-?\d+(\.\d+)?$/.test(stv) ? Number(stv) : stv;
+    if (g) x.group = g;
+  }
+  if (!items.length) throw new Error("没有可画的活动行");
+  const s = { type: "gantt", rows: items, cols: [ix.owner !== undefined ? h[ix.owner] : "负责人", ix.remark !== undefined ? h[ix.remark] : "备注"] };
+  if (ix.name !== undefined && h[ix.name]) s.head_label = h[ix.name];
+  if (ix.status !== undefined && h[ix.status]) s.status_label = h[ix.status];
+  if (milestones.length) s.milestones = milestones;
+  if (shades.length) s.shades = shades;
+  const rs = (o.range_start || "").trim(), re_ = (o.range_end || "").trim();
+  if (rs) d0 = isoDate(rs);
+  if (re_) d1 = isoDate(re_);
+  if (d0) s.d0 = d0;
+  if (d1) s.d1 = d1;
+  const sc = o.scale || "auto";
+  if (sc === "auto") s.scale = "auto"; else s.scales = sc.split(",");
+  if (o.week_fmt) s.week_fmt = o.week_fmt;
+  if (o.fy_start && o.fy_start !== "1") s.fy_start = Number(o.fy_start);
+  ["date_labels", "weekends", "row_shading"].forEach((k) => { if (o[k]) s[k] = true; });
+  if (o.today) s.today = new Date().toISOString().slice(0, 10);
+  return s;
 }
 
 // ------------------------------------------------------------------ 图表类型定义
@@ -330,30 +437,40 @@ const TYPES = [
       return s;
     } },
   { id: "gantt", name: "甘特图（项目计划）", anns: false,
-    opts: [{ k: "scale", t: "select", label: "主刻度", opts: [["month", "月"], ["quarter", "季"], ["week", "周"], ["year", "年"]] },
-      { k: "sub_scale", t: "select", label: "次刻度", opts: [["", "无"], ["week", "周"], ["month", "月"]] },
-      { k: "today", t: "check", label: "显示今天线", def: true }],
-    hint: "列：活动、开始、结束、[负责人]、[备注]、[状态 0-4]、[分组]。结束留空 = 里程碑。日期如 2026-09-01。分组决定颜色，可在「图例」里显示。",
-    sample: "活动\t开始\t结束\t负责人\t备注\t状态\n数据收集\t2026-09-01\t2026-10-15\t张\t\t3\n专家访谈\t2026-09-20\t2026-11-10\t李\t\t1\n模型搭建\t2026-10-15\t2026-12-01\t王\t\t0\n中期汇报\t2026-11-05\t\t张\t\t\n报告撰写\t2026-11-20\t2026-12-22\t张\t含 PPT\t0",
-    build(rows, h, o) {
-      const items = rows.map((r) => {
-        const it = { name: r[0] };
-        const st = isoDate(r[1]);
-        if (r[2]) { it.start = st; it.end = isoDate(r[2]); } else { it.milestone = st; }
-        if (r[3]) it.owner = r[3];
-        if (r[4]) it.remark = r[4];
-        if (r[5] !== undefined && r[5] !== "") it.status = Number(r[5]);
-        if (r[6]) it.group = r[6];
-        return it;
-      });
-      const ds = items.flatMap((i) => [i.start, i.end, i.milestone].filter(Boolean)).sort();
-      const pad = (d, m) => { const x = new Date(d); x.setMonth(x.getMonth() + m); return x.toISOString().slice(0, 10); };
-      const d0 = ds[0].slice(0, 8) + "01";
-      const s = { type: "gantt", rows: items, d0, d1: pad(ds[ds.length - 1].slice(0, 8) + "01", 1), scale: o.scale || "month" };
-      if (o.sub_scale) s.sub_scale = o.sub_scale;
-      if (o.today !== false) s.today = new Date().toISOString().slice(0, 10);
-      return s;
-    } },
+    opts: [{ k: "scale", t: "select", label: "时间刻度", opts: [["auto", "自动"], ["month,week", "月 + 周"], ["month,day", "月 + 日"], ["year,month", "年 + 月"], ["year,quarter", "年 + 季"], ["month", "月"], ["quarter", "季"], ["week", "周"], ["year", "年"]] },
+      { k: "week_fmt", t: "select", label: "周显示", opts: [["iso", "周号（ISO）"], ["date", "日期（月/日）"]] },
+      { k: "range_start", t: "text", label: "范围开始", ph: "留空=自动，如 2026-04-27" },
+      { k: "range_end", t: "text", label: "范围结束", ph: "留空=自动" },
+      { k: "fy_start", t: "select", label: "财年起始月", opts: [["1", "1 月（自然年）"], ["4", "4 月"], ["7", "7 月"], ["10", "10 月"]] },
+      { k: "date_labels", t: "check", label: "条形两端显示日期" },
+      { k: "weekends", t: "check", label: "周末底纹" },
+      { k: "row_shading", t: "check", label: "隔行底纹" },
+      { k: "today", t: "check", label: "今天线" }],
+    hint: "按表头识别列：活动、开始、结束、标签、样式、负责人、备注、状态(0-4 / 是 / 否)、分组、阶段。结束留空 = 里程碑。活动留空 = 画在上一行（一行多段）。阶段变化或活动写 --- = 分隔线。样式可写：虚线、左/右/上/下（标签位置）、三角/圆/方/星（里程碑形状）、竖线（全局里程碑）、底纹（排他期/假期）、范围（时间轴起止）。",
+    sample: [
+      "活动\t开始\t结束\t标签\t样式\t负责人\t状态\t阶段",
+      "时间范围\t2026-04-27\t2026-07-26\t\t范围\t\t\t",
+      "发送推介材料\t2026-04-15\t2026-05-06\t\t\tSasha\t4\t准备",
+      "签署保密协议\t2026-05-04\t2026-05-08\t\t\tMahan\t4\t准备",
+      "管理层电话会\t2026-05-08\t2026-05-23\t\t\tAmal, Dani\t4\t尽调",
+      "财务模型与估值\t2026-05-08\t2026-05-30\t\t\tDani\t4\t尽调",
+      "意向报价\t2026-05-25\t2026-06-05\t\t\tAmal\t3\t尽调",
+      "\t2026-06-05\t\t买家短名单\t右\t\t\t",
+      "数据室开放\t2026-05-08\t2026-06-05\t第一阶段\t虚线\tAmal, Hao\t3\t尽调",
+      "\t2026-06-05\t2026-06-29\t第二阶段\t虚线\t\t\t",
+      "管理层现场会\t2026-06-10\t2026-06-26\t\t\tDani\t2\t尽调",
+      "最终尽职调查\t2026-06-05\t2026-07-06\t\t\tAmal, Hao, Rosario\t1\t尽调",
+      "\t2026-07-04\t\t尽调报告交付\t下\t\t\t",
+      "最终协议 SPA/APA\t2026-07-06\t2026-07-24\t\t\tQuinn\t0\t签约",
+      "股东协议\t2026-06-29\t2026-07-20\t\t虚线\tQuinn\t0\t签约",
+      "\t2026-07-20\t2026-07-24\t\t\t\t\t",
+      "\t2026-06-29\t\tSPA 初稿\t左\t\t\t",
+      "保密协议签署\t2026-05-08\t\t\t竖线\t\t\t",
+      "尽调启动\t2026-06-05\t\t\t竖线\t\t\t",
+      "排他期\t2026-06-29\t2026-07-06\t\t底纹\t\t\t",
+      "协议签署\t2026-07-24\t\t7月24日 协议签署\t竖线\t\t\t",
+    ].join("\n"),
+    build(rows, h, o) { return ganttSpec(rows, h, o); } },
   { id: "table", name: "表格（Harvey ball / 复选框）", anns: false,
     opts: [{ k: "harvey", t: "text", label: "Harvey 列（列号）", ph: "如 2,3,4" }, { k: "check", t: "text", label: "复选框列", ph: "如 5" },
       { k: "bar", t: "text", label: "迷你条列", ph: "如 6" }, { k: "total_row", t: "check", label: "最后一行是合计" }],
@@ -459,7 +576,7 @@ function readAnns() {
   const dm = $("anns").querySelector('[data-a="dmode"]'); if (dm) dm.parentElement.style.display = ANN.diff ? "" : "none";
   const vv = $("anns").querySelector('[data-a="vlv"]'); if (vv) vv.parentElement.style.display = ANN.vl ? "" : "none";
 }
-function annotations(spec, nCats) {
+function annotations(spec, nCats, ANN) {
   const a = [];
   const ty = spec.type;
   if (ANN.cagr0 !== undefined && ANN.cagr0 !== "") {
@@ -486,36 +603,41 @@ function currentGrid(silent) {
   return { head: g[0] || [], rows: g.slice(1) };
 }
 
-function buildSpec() {
-  const ty = T[$("type").value];
-  const { head, rows } = currentGrid();
+function buildSpec(st) {
+  st = st || panelState();
+  const ty = T[st.type];
+  if (!ty) throw new Error("未知图表类型");
+  const g = parseGrid(st.data || "");
+  const head = g[0] || [], rows = g.slice(1);
   if (head.length < 2 && ty.id !== "gauge") throw new Error("至少需要两列（类目 + 数值）");
   if (!rows.length) throw new Error("没有数据行");
-  const mag = Number($("mag").value || 1);
-  const spec = ty.build(mag > 1 && MAG_TYPES.has(ty.id) ? scaleRows(rows, mag) : rows, head, OPT);
-  const [W, H] = $("size").value.split("x").map(Number);
+  const mag = Number(st.mag || 1);
+  const spec = ty.build(mag > 1 && MAG_TYPES.has(ty.id) ? scaleRows(rows, mag) : rows, head, st.opt || {});
+  const [W, H] = String(st.size || "680x400").split("x").map(Number);
   spec.size = [W, H];
-  if ($("title").value.trim()) spec.title = $("title").value.trim();
-  if ($("subtitle").value.trim()) spec.subtitle = $("subtitle").value.trim();
-  if ($("source").value.trim()) spec.source = $("source").value.trim();
-  spec.theme = $("theme").value === "custom" ? Object.assign({ base: "consulting" }, customTheme()) : $("theme").value;
+  ["title", "subtitle", "source"].forEach((k) => { const v = String(st[k] || "").trim(); if (v) spec[k] = v; });
+  spec.theme = st.theme === "custom" ? Object.assign({ base: "consulting" }, customTheme()) : (st.theme || "consulting");
   if (LEGEND_TYPES.has(spec.type)) {
-    if ($("legend").value !== "auto") spec.legend = $("legend").value;
-    if ($("legendRev").checked) spec.legend_reverse = true;
+    if (st.legend && st.legend !== "auto") spec.legend = st.legend;
+    if (st.legendRev) spec.legend_reverse = true;
   }
-  const names = seriesNames(spec);
-  const sc = {};
-  names.forEach((n) => { if (COLORS[n]) sc[n] = COLORS[n]; });
+  const cols = st.colors || {}, sc = {};
+  seriesNames(spec).forEach((n) => { if (cols[n]) sc[n] = cols[n]; });
   if (Object.keys(sc).length) spec.series_colors = sc;
-  if ($("dec").value !== "" && !["pie", "pie_of_pie", "concentric", "table", "gantt", "gauge", "scatter", "bubble"].includes(spec.type)) spec.dec = Number($("dec").value);
+  if (st.dec !== "" && st.dec !== undefined && st.dec !== null && !["pie", "pie_of_pie", "concentric", "table", "gantt", "gauge", "scatter", "bubble"].includes(spec.type)) spec.dec = Number(st.dec);
   if (ty.anns) {
-    const ann = annotations(spec, rows.length);
+    const ann = annotations(spec, rows.length, st.ann || {});
     if (ann.length) spec.annotations = ann;
     if (spec.type === "column" && spec.annotations && spec.annotations.some((x) => x.type === "cagr") && spec.horizontal) {
       spec.annotations = spec.annotations.filter((x) => x.type !== "cagr");
     }
   }
   return spec;
+}
+// 不动面板，按保存的图表状态直接出图（Excel 链接自动刷新用）
+function renderState(st) {
+  const spec = st.json ? JSON.parse(st.json) : buildSpec(st);
+  return Object.assign({ spec }, JSON.parse(API.render(JSON.stringify(spec))));
 }
 
 const MAG_TYPES = new Set(["column", "waterfall", "line", "area", "combo", "pareto", "butterfly", "mekko", "pie", "pie_of_pie",
@@ -672,9 +794,11 @@ function setSelectedAsync(data, opts) {
 }
 // ---- 文档内存储：每张插件图表的面板设置存进文档 settings（随文件走），键 = 形状名
 function docSettings() { try { return Office.context.document.settings; } catch (e) { return null; } }
+function chartIndex() { const st = docSettings(); return (st && st.get("TC:index")) || []; }
 function saveChartState(name, state) {
   const st = docSettings(); if (!st) return Promise.resolve();
   st.set(name, state);
+  const idx = chartIndex(); if (!idx.includes(name)) { idx.push(name); st.set("TC:index", idx); }
   return new Promise((res) => st.saveAsync(() => res()));
 }
 function getChartState(name) { const st = docSettings(); return st ? st.get(name) : null; }
@@ -819,24 +943,146 @@ async function pptUpdate() {
 }
 
 // ------------------------------------------------------------------ Office：Excel
+function xlAddSvgShape(sh, out) {
+  try { return sh.shapes.addSvg(out.svg); } catch (e) { return null; }
+}
 async function xlInsertSvg() {
   const wPx = 560, name = newChartName();
+  let sheetName = "";
   await Excel.run(async (ctx) => {
-    const sh = ctx.workbook.worksheets.getActiveWorksheet();
+    const sh = ctx.workbook.worksheets.getActiveWorksheet(); sh.load("name");
     const r = ctx.workbook.getSelectedRange(); r.load("left,top,width");
     await ctx.sync();
-    let shp;
-    try { shp = sh.shapes.addSvg(LAST.svg); }
-    catch (e) { const png = await svgToPngDataUrl(LAST.svg, LAST.width, LAST.height, 3); shp = sh.shapes.addImage(png.split(",")[1]); }
+    sheetName = sh.name;
+    let shp = xlAddSvgShape(sh, LAST);
+    if (!shp) { const png = await svgToPngDataUrl(LAST.svg, LAST.width, LAST.height, 3); shp = sh.shapes.addImage(png.split(",")[1]); }
     shp.lockAspectRatio = true;
     shp.left = r.left + r.width + 12; shp.top = r.top; shp.width = wPx;
     shp.name = name;
     try { shp.altTextDescription = LAST.spec.title || "think-cell 风格图表"; } catch (e) { /* 忽略 */ }
     await ctx.sync();
   });
-  await saveChartState(name, panelState());
+  const st = panelState(); st.sheet = sheetName;
+  if (SEL_ADDRESS) st.link = SEL_ADDRESS;
+  await saveChartState(name, st);
   await xlRefreshList(name);
-  return "已插入到选区右侧。以后在「本表图表」里选中它即可编辑";
+  return st.link ? `已插入，并与 ${st.link} 链接：改这些单元格，图会自动更新` : "已插入到选区右侧。想让图跟着单元格变：先「读取选区」或「数据写入单元格」再插入";
+}
+// 按形状名替换图片（位置、宽度不变）
+async function xlReplaceShape(name, out, sheet) {
+  await Excel.run(async (ctx) => {
+    const sh = sheet ? ctx.workbook.worksheets.getItem(sheet) : ctx.workbook.worksheets.getActiveWorksheet();
+    const old = sh.shapes.getItem(name); old.load("left,top,width"); await ctx.sync();
+    const L = old.left, Tp = old.top, Wd = old.width;
+    old.delete();
+    let shp = xlAddSvgShape(sh, out);
+    if (!shp) { const png = await svgToPngDataUrl(out.svg, out.width, out.height, 3); shp = sh.shapes.addImage(png.split(",")[1]); }
+    shp.lockAspectRatio = true; shp.left = L; shp.top = Tp; shp.width = Wd; shp.name = name;
+    await ctx.sync();
+  });
+}
+// ---- 单元格 ↔ 图表 链接
+function splitAddr(a) {
+  const i = String(a).lastIndexOf("!");
+  if (i < 0) return { sheet: "", range: a };
+  return { sheet: a.slice(0, i).replace(/^'(.*)'$/, "$1").replace(/''/g, "'"), range: a.slice(i + 1) };
+}
+function colNum(l) { let n = 0; for (const ch of l.toUpperCase()) n = n * 26 + ch.charCodeAt(0) - 64; return n; }
+function a1Rect(r) {
+  const parts = String(r).replace(/\$/g, "").split(":");
+  const one = (x) => { const m = x.match(/^([A-Za-z]*)(\d*)$/) || ["", "", ""]; return { c: m[1] ? colNum(m[1]) : null, r: m[2] ? Number(m[2]) : null }; };
+  const p = one(parts[0]), q = one(parts[1] || parts[0]);
+  return { c0: p.c ?? 1, r0: p.r ?? 1, c1: q.c ?? 1e6, r1: q.r ?? 1e7 };
+}
+function intersects(a, b) { return a.c0 <= b.c1 && b.c0 <= a.c1 && a.r0 <= b.r1 && b.r0 <= a.r1; }
+function rangeText(values, numberFormat) {
+  return values.map((row, i) => row.map((v, j) => {
+    const nf = String(((numberFormat || [])[i] || [])[j] || "");
+    if (typeof v === "number" && /[yd]/i.test(nf) && !/%/.test(nf) && v > 20000) return excelDate(v);
+    if (typeof v === "number" && /%/.test(nf)) return +(v * 100).toFixed(6) + "%";
+    return v;
+  }).join("\t")).join("\n");
+}
+async function xlReadRange(address) {
+  let txt = "";
+  await Excel.run(async (ctx) => {
+    const a = splitAddr(address);
+    const ws = a.sheet ? ctx.workbook.worksheets.getItem(a.sheet) : ctx.workbook.worksheets.getActiveWorksheet();
+    const r = ws.getRange(a.range); r.load("values,numberFormat"); await ctx.sync();
+    txt = rangeText(r.values, r.numberFormat);
+  });
+  return txt;
+}
+function gridValues(grid, plain) {
+  const vals = grid.map((r, i) => r.map((c, j) => {
+    const v = num(c);
+    if (j === 0 && i > 0 && typeof v === "number") return plain ? v : "'" + c;   // 类目列保持文本
+    return i === 0 || j === 0 || v === null || Number.isNaN(v) || v === "e" || /^\d{4}-\d{1,2}(-\d{1,2})?$/.test(String(c).trim()) ? c : v;
+  }));
+  const w = Math.max(...vals.map((r) => r.length));
+  vals.forEach((r) => { while (r.length < w) r.push(""); });
+  return vals;
+}
+let LINK_MUTE_UNTIL = 0;
+// 把面板数据写到 Excel（from = 链接地址，或省略 = 当前选中单元格左上角），返回带表名的新地址
+async function xlWriteGrid(grid, from) {
+  let addr = "";
+  const vals = gridValues(grid, !!from);   // 写回已链接区域：类目列数字保持数字
+  LINK_MUTE_UNTIL = Date.now() + 2500;
+  await Excel.run(async (ctx) => {
+    let tl;
+    if (from) { const a = splitAddr(from); const ws = a.sheet ? ctx.workbook.worksheets.getItem(a.sheet) : ctx.workbook.worksheets.getActiveWorksheet(); tl = ws.getRange(a.range).getCell(0, 0); }
+    else tl = ctx.workbook.getSelectedRange().getCell(0, 0);
+    const rng = tl.getResizedRange(vals.length - 1, vals[0].length - 1);
+    rng.values = vals; rng.load("address"); await ctx.sync();
+    addr = rng.address;
+  });
+  return addr;
+}
+async function xlWriteSelection() {
+  const g = parseGrid($("data").value);
+  if (g.length < 2) throw new Error("面板里还没有数据");
+  SEL_ADDRESS = await xlWriteGrid(g);
+  return `已写入 ${SEL_ADDRESS}。现在点「插入图表（高保真）」，图会和这些单元格链接`;
+}
+const LINK_TIMERS = {};
+async function onXlChanged(ev) {
+  if (Date.now() < LINK_MUTE_UNTIL) return;
+  const names = chartIndex().filter((n) => { const st = getChartState(n); return st && st.link; });
+  if (!names.length) return;
+  let sheet = "";
+  try { await Excel.run(async (ctx) => { const ws = ctx.workbook.worksheets.getItem(ev.worksheetId); ws.load("name"); await ctx.sync(); sheet = ws.name; }); } catch (e) { return; }
+  const hit = a1Rect(ev.address);
+  names.forEach((n) => {
+    const L = splitAddr(getChartState(n).link);
+    if ((L.sheet || sheet) === sheet && intersects(a1Rect(L.range), hit)) {
+      clearTimeout(LINK_TIMERS[n]); LINK_TIMERS[n] = setTimeout(() => refreshLinked(n), 600);
+    }
+  });
+}
+async function refreshLinked(name) {
+  const st = getChartState(name);
+  if (!st || !st.link || !API) return;
+  try {
+    st.data = await xlReadRange(st.link);
+    const out = renderState(st);
+    await xlReplaceShape(name, out, st.sheet);
+    await saveChartState(name, st);
+    if (EDIT && EDIT.name === name) { setData(st.data, true); SEL_ADDRESS = st.link; renderOpts(); render(); }
+    status(`已按单元格数据自动更新：${st.title || "图表"}`, "ok");
+  } catch (e) { status("链接图表更新失败：" + (e.message || e), "bad"); }
+}
+async function xlWatch() {
+  try {
+    await Excel.run(async (ctx) => { ctx.workbook.worksheets.onChanged.add(onXlChanged); await ctx.sync(); });
+  } catch (e) {   // 旧版 Excel：逐个工作表注册
+    try {
+      await Excel.run(async (ctx) => {
+        const wss = ctx.workbook.worksheets; wss.load("items"); await ctx.sync();
+        wss.items.forEach((ws) => ws.onChanged.add(onXlChanged)); await ctx.sync();
+      });
+    } catch (e2) { /* 不支持事件：只能手动更新 */ }
+  }
 }
 async function xlRefreshList(selectName) {
   if (HOST !== "xl") return;
@@ -848,7 +1094,7 @@ async function xlRefreshList(selectName) {
       const cur = selectName !== undefined ? selectName : $("xlCharts").value;
       $("xlCharts").innerHTML = '<option value="">（新建）</option>' + items.map((x) => {
         const st = getChartState(x.name) || {};
-        return `<option value="${esc(x.name)}">${esc(st.title || x.name)}</option>`;
+        return `<option value="${esc(x.name)}">${st.link ? "🔗 " : ""}${esc(st.title || x.name)}</option>`;
       }).join("");
       if ([...$("xlCharts").options].some((o) => o.value === cur)) $("xlCharts").value = cur;
     });
@@ -862,20 +1108,20 @@ function xlPick(name) {
 }
 async function xlUpdate() {
   if (!EDIT) throw new Error("没有正在编辑的图表");
-  await Excel.run(async (ctx) => {
-    const sh = ctx.workbook.worksheets.getActiveWorksheet();
-    const old = sh.shapes.getItem(EDIT.name); old.load("left,top,width"); await ctx.sync();
-    const L = old.left, Tp = old.top, Wd = old.width;
-    old.delete();
-    let shp;
-    try { shp = sh.shapes.addSvg(LAST.svg); }
-    catch (e) { const png = await svgToPngDataUrl(LAST.svg, LAST.width, LAST.height, 3); shp = sh.shapes.addImage(png.split(",")[1]); }
-    shp.lockAspectRatio = true; shp.left = L; shp.top = Tp; shp.width = Wd; shp.name = EDIT.name;
-    await ctx.sync();
-  });
-  await saveChartState(EDIT.name, panelState());
+  const prev = getChartState(EDIT.name) || {};
+  const st = panelState(); st.sheet = prev.sheet;
+  let note = "";
+  if (prev.link) {
+    st.link = prev.link;
+    if (parseGrid(st.data).join("\n") !== parseGrid(prev.data || "").join("\n")) {   // 面板里改了数据 → 写回链接的单元格
+      st.link = await xlWriteGrid(parseGrid(st.data), prev.link);
+      note = `，数据已写回 ${st.link}`;
+    }
+  } else if (SEL_ADDRESS) st.link = SEL_ADDRESS;
+  await xlReplaceShape(EDIT.name, LAST, st.sheet);
+  await saveChartState(EDIT.name, st);
   EDIT.title = $("title").value; showBanner(); xlRefreshList(EDIT.name);
-  return "已在原位置更新";
+  return "已在原位置更新" + note;
 }
 const XL_TYPE = { stacked: "ColumnStacked", clustered: "ColumnClustered", "100": "ColumnStacked100" };
 function xlChartType(spec) {
@@ -902,13 +1148,7 @@ async function xlInsertNative() {
     else {  // 数据是粘贴进来的：先写到选中单元格处
       const sel = ctx.workbook.getSelectedRange(); sel.load("address"); await ctx.sync();
       const tl = sel.getCell(0, 0);
-      const vals = grid.map((r, i) => r.map((c, j) => {
-        const v = num(c);
-        if (j === 0 && i > 0 && typeof v === "number") return "'" + c;   // 类目列保持文本，避免被当成系列
-        return i === 0 || j === 0 || v === null || Number.isNaN(v) || v === "e" ? c : v;
-      }));
-      const w = Math.max(...vals.map((r) => r.length));
-      vals.forEach((r) => { while (r.length < w) r.push(""); });
+      const vals = gridValues(grid), w = vals[0].length;
       rng = tl.getResizedRange(vals.length - 1, w - 1);
       rng.values = vals;
     }
@@ -934,13 +1174,7 @@ async function xlInsertNative() {
 async function xlReadSelection() {
   await Excel.run(async (ctx) => {
     const r = ctx.workbook.getSelectedRange(); r.load("values,numberFormat,address"); await ctx.sync();
-    const lines = r.values.map((row, i) => row.map((v, j) => {
-      const nf = String((r.numberFormat[i] || [])[j] || "");
-      if (typeof v === "number" && /[yd]/i.test(nf) && !/%/.test(nf) && v > 20000) return excelDate(v);
-      if (typeof v === "number" && /%/.test(nf)) return +(v * 100).toFixed(6) + "%";
-      return v;
-    }).join("\t"));
-    setData(lines.join("\n"));
+    setData(rangeText(r.values, r.numberFormat));
     SEL_ADDRESS = r.address;
   });
   renderOpts(); schedule();
@@ -961,7 +1195,7 @@ function applyState(s) {
   ["title", "subtitle", "source", "theme", "dec", "size", "legend", "mag"].forEach((k) => { if (s[k] !== undefined && s[k] !== null) $(k).value = s[k]; });
   $("legendRev").checked = !!s.legendRev;
   OPT = s.opt || {}; ANN = s.ann || {}; COLORS = s.colors || {};
-  setData(s.data || T[s.type].sample);
+  setData(parseGrid(s.data || "").length > 1 ? s.data : T[s.type].sample);
   SEL_ADDRESS = s.sel || null;
   $("jsonLock").checked = !!s.json;
   if (s.json) $("json").value = s.json;
@@ -981,14 +1215,20 @@ const act = (fn, needChart = true) => async () => {
 function wire() {
   $("type").innerHTML = TYPES.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
   gridWire(); colorsWire(); themeWire();
-  if (!loadState()) { $("type").value = "column"; setData(T.column.sample); $("title").value = "Chiller 市场 4 年复合增长 8.6%"; $("subtitle").value = "全球市场规模，亿美元"; ANN = { cagr0: "0", cagr1: "4" }; }
+  if (!loadState()) { $("type").value = "column"; setData(T.column.sample); $("title").value = DEMO_TITLE; $("subtitle").value = "全球市场规模，亿美元"; ANN = { cagr0: "0", cagr1: "4" }; }
   $("type").addEventListener("change", () => {
     OPT = {}; ANN = {}; SEL_ADDRESS = null;
     const cur = parseGrid($("data").value);
-    if (!cur.length || TYPES.some((t) => t.sample === $("data").value)) setData(T[$("type").value].sample);
+    let fits = cur.length > 1 && !TYPES.some((t) => t.sample === $("data").value);
+    if (fits) { try { T[$("type").value].build(cur.slice(1), cur[0], {}); } catch (e) { fits = false; } }
+    if (!fits) {   // 现有数据不适合新类型 → 换成该类型的示例
+      setData(T[$("type").value].sample);
+      if ($("title").value === DEMO_TITLE) { $("title").value = ""; $("subtitle").value = ""; }
+    }
     COLORS = {};
     renderOpts(); schedule();
   });
+  $("data").addEventListener("paste", (e) => { const t = (e.clipboardData || window.clipboardData).getData("text"); if (pasteChart(t)) e.preventDefault(); });
   $("data").addEventListener("input", () => { GRID = padGrid(parseGrid($("data").value)); SEL_ADDRESS = null; onDataChanged(); });
   ["title", "subtitle", "source"].forEach((k) => $(k).addEventListener("input", schedule));
   ["dec", "size", "legend", "mag", "legendRev"].forEach((k) => $(k).addEventListener("change", schedule));
@@ -1006,6 +1246,7 @@ function wire() {
   $("btnSvgXl").onclick = act(xlInsertSvg);
   $("btnNative").onclick = act(xlInsertNative);
   $("btnSel").onclick = act(xlReadSelection, false);
+  $("btnWriteXl").onclick = act(xlWriteSelection, false);
   $("btnDlSvg").onclick = act(async () => { download(fileBase() + ".svg", new Blob([LAST.svg], { type: "image/svg+xml" })); return "已下载 SVG"; });
   $("btnDlPng").onclick = act(async () => { const u = await svgToPngDataUrl(LAST.svg, LAST.width, LAST.height, 3); download(fileBase() + ".png", b64ToBlob(u.split(",")[1], "image/png")); return "已下载 PNG"; });
   $("btnDlPptx").onclick = act(async () => { download(fileBase() + ".pptx", b64ToBlob(await pptxB64(), "application/vnd.openxmlformats-officedocument.presentationml.presentation")); return "已下载 PPTX"; });
@@ -1035,7 +1276,7 @@ if (window.Office && Office.onReady) {
       setHost("ppt");
       try { Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, () => pptSelectionChanged()); } catch (e) { /* 忽略 */ }
       pptSelectionChanged();
-    } else if (info.host === Office.HostType.Excel) { setHost("xl"); xlRefreshList(); }
+    } else if (info.host === Office.HostType.Excel) { setHost("xl"); xlRefreshList(); xlWatch(); }
   });
 }
 initPy();
