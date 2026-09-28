@@ -161,6 +161,24 @@
     return JSON.parse(JSON.stringify(value));
   }
 
+  const THEME_KEYS = Object.freeze(["ACCENT", "OTHER", "POS", "NEG", "TOTAL"]);
+  function normalizeColorTheme(value, fallback) {
+    const safeFallback = cloneData(fallback);
+    try {
+      assertTree(value, 0, "customTheme");
+      if (!value || typeof value !== "object" || Array.isArray(value)) return safeFallback;
+      const allowed = new Set(["SERIES"].concat(THEME_KEYS));
+      if (Object.keys(value).some((key) => !allowed.has(key))) return safeFallback;
+      if (!Array.isArray(value.SERIES) || value.SERIES.length < 1 || value.SERIES.length > 10) return safeFallback;
+      if (!value.SERIES.every((color) => typeof color === "string" && COLOR_RE.test(color))) return safeFallback;
+      if (!THEME_KEYS.every((key) => typeof value[key] === "string" && COLOR_RE.test(value[key]))) return safeFallback;
+      return {
+        SERIES: value.SERIES.slice(),
+        ACCENT: value.ACCENT, OTHER: value.OTHER, POS: value.POS, NEG: value.NEG, TOTAL: value.TOTAL,
+      };
+    } catch (error) { return safeFallback; }
+  }
+
   function panelChart(input) {
     const chart = {};
     PANEL_KEYS.forEach((key) => {
@@ -331,5 +349,5 @@
   }
 
   return Object.freeze({ CURRENT_VERSION, PAYLOAD_PREFIX, MAX_PAYLOAD_BYTES, MAX_DEPTH, TCError, normalize, migrate,
-    validateChart, validateSpec, serializeClipboard, parseClipboard, createChartId, sanitizeSvg, createRenderLifecycle });
+    validateChart, validateSpec, normalizeColorTheme, serializeClipboard, parseClipboard, createChartId, sanitizeSvg, createRenderLifecycle });
 }));

@@ -63,6 +63,56 @@ test("a copied duplicate is forked while the recorded host reference remains can
   assert.equal(Store.editDisposition(result, "xl:sheet-1:shape-1").action, "keep");
 });
 
+test("a legacy worksheet-name host reference still identifies the original after sheet rename", () => {
+  const original = shape("xl:sheet-id-1:shape-1", `TC:${C}`, C, 4);
+  Object.assign(original, { host: "xl", shapeId: "shape-1" });
+  const copy = shape("xl:sheet-id-1:shape-copy", `TC:${C}`, C, 4);
+  Object.assign(copy, { host: "xl", shapeId: "shape-copy" });
+
+  const result = Store.reconcileIdentities(
+    [record(C, 4, { hostRef: "xl:Old Sheet:shape-1" })],
+    [original, copy],
+    {},
+  );
+
+  assert.equal(result.matches[0].shape.hostRef, "xl:sheet-id-1:shape-1");
+  assert.deepEqual(result.forks.map((item) => item.shape.hostRef), ["xl:sheet-id-1:shape-copy"]);
+});
+
+test("an exact worksheet-id host reference wins before legacy shape-id fallback", () => {
+  const original = shape("xl:sheet-id-a:shape-1", `TC:${C}`, C, 4);
+  Object.assign(original, { host: "xl", sheetId: "sheet-id-a", shapeId: "shape-1" });
+  const otherSheet = shape("xl:sheet-id-b:shape-1", `TC:${C}`, C, 4);
+  Object.assign(otherSheet, { host: "xl", sheetId: "sheet-id-b", shapeId: "shape-1" });
+
+  const result = Store.reconcileIdentities(
+    [record(C, 4, { hostRef: "xl:sheet-id-a:shape-1", sheetId: "sheet-id-a" })],
+    [original, otherSheet],
+    {},
+  );
+
+  assert.equal(result.matches[0].shape.hostRef, "xl:sheet-id-a:shape-1");
+  assert.deepEqual(result.forks.map((item) => item.shape.hostRef), ["xl:sheet-id-b:shape-1"]);
+  assert.equal(result.duplicates.length, 0);
+});
+
+test("a missing worksheet-id host reference never adopts the same shape id from another sheet", () => {
+  const wrongSheet = shape("xl:sheet-id-b:shape-1", `TC:${C}`, C, 4);
+  Object.assign(wrongSheet, { host: "xl", sheetId: "sheet-id-b", shapeId: "shape-1" });
+  const copy = shape("xl:sheet-id-b:shape-copy", `TC:${C}`, C, 4);
+  Object.assign(copy, { host: "xl", sheetId: "sheet-id-b", shapeId: "shape-copy" });
+
+  const result = Store.reconcileIdentities(
+    [record(C, 4, { hostRef: "xl:sheet-id-a:shape-1", sheetId: "sheet-id-a" })],
+    [wrongSheet, copy],
+    {},
+  );
+
+  assert.equal(result.matches.length, 0);
+  assert.equal(result.forks.length, 0);
+  assert.equal(result.duplicates.length, 1);
+});
+
 test("pending crash recovery prefers the highest committed revision without deleting the survivor", () => {
   const result = Store.reconcileIdentities(
     [record(D, 3, { hostRef: "ppt:s1:old" })],

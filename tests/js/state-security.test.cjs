@@ -58,3 +58,31 @@ test("clipboard serialization round-trips Unicode through the shared validator",
   assert.equal(parsed.version, 3);
   assert.equal(parsed.chart.title, "市场增长 📈");
 });
+
+test("custom themes reject stored markup and fall back to a safe palette", () => {
+  const fallback = {
+    SERIES: ["#0B2D4F", "#3F86C0"],
+    ACCENT: "#E4572E", OTHER: "#D9D9D9", POS: "#2E8B57", NEG: "#C0392B", TOTAL: "#0B2D4F",
+  };
+  const poisoned = {
+    ...fallback,
+    SERIES: ['#0B2D4F\"><img src=x onerror=alert(1)>'],
+  };
+
+  const normalized = State.normalizeColorTheme(poisoned, fallback);
+
+  assert.deepEqual(normalized, fallback);
+  assert.notEqual(normalized, fallback);
+});
+
+test("custom themes accept only bounded six-digit hexadecimal palettes", () => {
+  const fallback = {
+    SERIES: ["#0B2D4F"],
+    ACCENT: "#E4572E", OTHER: "#D9D9D9", POS: "#2E8B57", NEG: "#C0392B", TOTAL: "#0B2D4F",
+  };
+  const valid = { ...fallback, SERIES: ["#123456", "#abcdef"] };
+
+  assert.deepEqual(State.normalizeColorTheme(valid, fallback), valid);
+  assert.deepEqual(State.normalizeColorTheme({ ...valid, SERIES: Array(11).fill("#123456") }, fallback), fallback);
+  assert.deepEqual(State.normalizeColorTheme({ ...valid, ACCENT: "red" }, fallback), fallback);
+});

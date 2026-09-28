@@ -25,6 +25,7 @@ test("PowerPoint capabilities distinguish slide insertion from shape selection",
     powerPointShapeMetadata: false,
     powerPointSelection: false,
     powerPointGroups: false,
+    excelShapes: false,
     excelSvg: false,
     excelCollectionEvents: false,
     excelWorksheetEvents: false,
@@ -35,6 +36,7 @@ test("Excel 1.9 enables SVG shapes and collection change events", () => {
   const office = officeWithSupport(new Set(["ExcelApi:1.9"]));
 
   const capabilities = OfficeAdapter.getCapabilities(office, "xl");
+  assert.equal(capabilities.excelShapes, true);
   assert.equal(capabilities.excelSvg, true);
   assert.equal(capabilities.excelCollectionEvents, true);
   assert.equal(capabilities.excelWorksheetEvents, true);
@@ -49,10 +51,27 @@ test("missing requirement APIs fail closed while retaining baseline image insert
     powerPointShapeMetadata: false,
     powerPointSelection: false,
     powerPointGroups: false,
+    excelShapes: false,
     excelSvg: false,
     excelCollectionEvents: false,
     excelWorksheetEvents: false,
   });
+});
+
+test("Excel 1.7 keeps worksheet events but disables shape operations", () => {
+  const capabilities = OfficeAdapter.getCapabilities(officeWithSupport(new Set(["ExcelApi:1.7"])), "xl");
+
+  assert.equal(capabilities.excelWorksheetEvents, true);
+  assert.equal(capabilities.excelShapes, false);
+  assert.equal(capabilities.excelSvg, false);
+});
+
+test("Excel host references remain stable when a worksheet is renamed", () => {
+  assert.equal(OfficeAdapter.excelHostRef("sheet-id-42", "shape-id-7"), "xl:sheet-id-42:shape-id-7");
+  assert.equal(
+    OfficeAdapter.excelHostRef("sheet-id-42", "shape-id-7"),
+    OfficeAdapter.excelHostRef("sheet-id-42", "shape-id-7", "Renamed Sheet"),
+  );
 });
 
 test("PowerPoint shape metadata is gated separately from slide insertion", () => {
@@ -63,6 +82,15 @@ test("PowerPoint shape metadata is gated separately from slide insertion", () =>
   assert.equal(capabilities.powerPointShapes, true);
   assert.equal(capabilities.powerPointShapeMetadata, true);
   assert.equal(capabilities.powerPointSelection, false);
+});
+
+test("PowerPoint 1.2 inserts an untracked editable slide while 1.4 enables identity tracking", () => {
+  const ppt12 = OfficeAdapter.getCapabilities(officeWithSupport(new Set(["PowerPointApi:1.2"])), "ppt");
+  const ppt14 = OfficeAdapter.getCapabilities(officeWithSupport(new Set(["PowerPointApi:1.2", "PowerPointApi:1.4"])), "ppt");
+
+  assert.equal(OfficeAdapter.powerPointSlideInsertionMode(ppt12), "untracked");
+  assert.equal(OfficeAdapter.powerPointSlideInsertionMode(ppt14), "tracked");
+  assert.equal(OfficeAdapter.powerPointSlideInsertionMode({}), "unsupported");
 });
 
 test("capability gate re-enables a supported non-render button after host detection", () => {

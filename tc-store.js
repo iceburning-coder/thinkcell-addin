@@ -11,6 +11,15 @@
   const LEGACY_INDEX_KEY = "TC:index";
   const CHART_KEY_PREFIX = "TC:chart:";
 
+  function legacyExcelHostRefMatches(recordedRef, record, shape) {
+    const value = String(recordedRef || "");
+    if (!value.startsWith("xl:") || !shape || shape.host !== "xl" || !shape.shapeId) return false;
+    const stableSheetId = record && ((record.meta && record.meta.sheetId) || (record.link && record.link.worksheetId));
+    if (stableSheetId && String(shape.sheetId || "") !== String(stableSheetId)) return false;
+    const separator = value.lastIndexOf(":");
+    return separator > 2 && value.slice(separator + 1) === String(shape.shapeId);
+  }
+
   function reconcileIdentities(records, shapes, pending) {
     const result = { matches: [], forks: [], orphans: [], duplicates: [], untracked: [], pendingRecoveries: [], autoDelete: [] };
     const recordList = (records || []).filter((record) => record && record.chartId);
@@ -56,7 +65,9 @@
       }
 
       const recordedRef = record.meta && record.meta.hostRef;
-      const hostMatches = recordedRef ? candidates.filter((shape) => shape.hostRef === recordedRef) : [];
+      const exactHostMatches = recordedRef ? candidates.filter((shape) => shape.hostRef === recordedRef) : [];
+      const hostMatches = exactHostMatches.length ? exactHostMatches
+        : (recordedRef ? candidates.filter((shape) => legacyExcelHostRefMatches(recordedRef, record, shape)) : []);
       if (hostMatches.length === 1) {
         addMatch(hostMatches[0]);
         candidates.filter((shape) => shape !== hostMatches[0]).forEach((shape) => result.forks.push(forkFor(record, shape)));

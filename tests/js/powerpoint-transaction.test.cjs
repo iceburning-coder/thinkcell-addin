@@ -121,3 +121,84 @@ test("PowerPoint render output is captured by value before an asynchronous trans
   assert.deepEqual(captured, { svg: "<svg id='first'/>", width: 640, height: 360 });
   assert.equal(Object.isFrozen(captured), true);
 });
+
+function fakeSlideAdapter(failAt) {
+  const state = { slides: [], persisted: false, tagged: false, cleanupCalls: 0 };
+  const fail = (phase) => { if (phase === failAt) throw new Error(`${phase} failed`); };
+  return {
+    state,
+    async snapshot() { fail("snapshot"); return { beforeSlideIds: new Set() }; },
+    async insert() { fail("insert"); state.slides.push({ slideId: "slide-new", shapeId: "group-new" }); },
+    async identify() { fail("identify"); return { slideId: "slide-new", id: "group-new" }; },
+    async persist() { fail("persist"); state.persisted = true; },
+    async tag() { fail("tag"); state.tagged = true; },
+    async cleanupPending() { state.cleanupCalls += 1; state.slides = []; },
+  };
+}
+
+for (const phase of ["snapshot", "insert", "identify", "persist"]) {
+  test(`editable-slide ${phase} failure cleans an uncommitted inserted slide`, async () => {
+    const adapter = fakeSlideAdapter(phase);
+
+    await assert.rejects(OfficeAdapter.insertPowerPointSlide(adapter), new RegExp(`${phase} failed`));
+
+    assert.equal(adapter.state.persisted, false);
+    if (phase !== "snapshot") {
+      assert.equal(adapter.state.cleanupCalls, 1);
+      assert.equal(adapter.state.slides.length, 0);
+    }
+  });
+}
+
+test("editable-slide insertion persists identity before tagging the group", async () => {
+  const adapter = fakeSlideAdapter(null);
+
+  const result = await OfficeAdapter.insertPowerPointSlide(adapter);
+
+  assert.deepEqual(result.pending, { slideId: "slide-new", id: "group-new" });
+  assert.equal(adapter.state.persisted, true);
+  assert.equal(adapter.state.tagged, true);
+  assert.equal(adapter.state.cleanupCalls, 0);
+});
+
+test("editable-slide tag failure keeps the persisted slide for recovery", async () => {
+  const adapter = fakeSlideAdapter("tag");
+
+  await assert.rejects(
+    OfficeAdapter.insertPowerPointSlide(adapter),
+    (error) => error.phase === "tag" && error.persisted === true,
+  );
+
+  assert.equal(adapter.state.persisted, true);
+  assert.equal(adapter.state.slides.length, 1);
+  assert.equal(adapter.state.cleanupCalls, 0);
+});
+
+test("editable-slide cleanup failure keeps the pending marker for later recovery", async () => {
+  const adapter = fakeSlideAdapter("persist");
+  adapter.cleanupPending = async () => { throw new Error("cleanup failed"); };
+
+  await assert.rejects(
+    OfficeAdapter.insertPowerPointSlide(adapter),
+    (error) => error.phase === "persist" && error.cleanupError && error.retainPending === true,
+  );
+});
+
+test("editable-slide cleanup only claims a new slide containing the expected chart marker", () => {
+  const before = new Set(["slide-old"]);
+  assert.equal(
+    OfficeAdapter.resolveOwnedInsertedSlideId(before, [
+      { id: "slide-old", shapeNames: [] },
+      { id: "slide-ours", shapeNames: ["TC:chart"] },
+      { id: "slide-theirs", shapeNames: ["Title 1"] },
+    ], "TC:chart"),
+    "slide-ours",
+  );
+  assert.throws(
+    () => OfficeAdapter.resolveOwnedInsertedSlideId(before, [
+      { id: "slide-old", shapeNames: [] },
+      { id: "slide-theirs", shapeNames: ["Title 1"] },
+    ], "TC:chart"),
+    /无法安全确认/,
+  );
+});

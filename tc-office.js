@@ -38,6 +38,7 @@
       powerPointShapeMetadata: ppt14,
       powerPointSelection: ppt15,
       powerPointGroups: ppt18,
+      excelShapes: excel19,
       excelSvg: excel19,
       excelCollectionEvents: excel19,
       excelWorksheetEvents: excel17,
@@ -155,6 +156,26 @@
     return slides.length === 1 && slides[0] === targetSlideId ? Array.from(selectedShapeIds || []) : [];
   }
 
+  function excelHostRef(worksheetId, shapeId) {
+    return `xl:${String(worksheetId || "")}:${String(shapeId || "")}`;
+  }
+
+  function powerPointSlideInsertionMode(capabilities) {
+    if (!capabilities || !capabilities.powerPointSlides) return "unsupported";
+    return capabilities.powerPointShapes ? "tracked" : "untracked";
+  }
+
+  function resolveOwnedInsertedSlideId(beforeIds, slides, expectedShapeName) {
+    const before = beforeIds instanceof Set ? beforeIds : new Set(beforeIds || []);
+    const added = Array.from(slides || []).filter((slide) => slide && !before.has(slide.id));
+    const owned = added.filter((slide) => Array.from(slide.shapeNames || []).includes(expectedShapeName));
+    if (owned.length === 1) return owned[0].id;
+    throw errorWithCode(
+      "TC_PPT_SLIDE_OWNERSHIP_AMBIGUOUS",
+      `无法安全确认待清理幻灯片的归属（新增 ${added.length} 张，含目标图表 ${owned.length} 张）。`,
+    );
+  }
+
   function chartSelectionMode(editing, selected) {
     if (!editing) return selected ? "selected" : "none";
     if (!selected) return "editing";
@@ -207,7 +228,33 @@
     } catch (error) {
       if (!error.persisted && insertStarted && typeof adapter.cleanupPending === "function") {
         try { await adapter.cleanupPending(prepared, pending); }
-        catch (cleanupError) { error.cleanupError = cleanupError; }
+        catch (cleanupError) { error.cleanupError = cleanupError; error.retainPending = true; }
+      }
+      throw error;
+    }
+  }
+
+  async function insertPowerPointSlide(adapter) {
+    let prepared;
+    try { prepared = await adapter.snapshot(); }
+    catch (error) { throw annotatePhase(error, "snapshot", false); }
+    let pending = null;
+    let insertStarted = false;
+    try {
+      insertStarted = true;
+      try { await adapter.insert(prepared); }
+      catch (error) { throw annotatePhase(error, "insert", false); }
+      try { pending = await adapter.identify(prepared); }
+      catch (error) { throw annotatePhase(error, "identify", false); }
+      try { await adapter.persist(prepared, pending); }
+      catch (error) { throw annotatePhase(error, "persist", false); }
+      try { await adapter.tag(prepared, pending); }
+      catch (error) { throw annotatePhase(error, "tag", true); }
+      return { prepared, pending };
+    } catch (error) {
+      if (!error.persisted && insertStarted && typeof adapter.cleanupPending === "function") {
+        try { await adapter.cleanupPending(prepared, pending); }
+        catch (cleanupError) { error.cleanupError = cleanupError; error.retainPending = true; }
       }
       throw error;
     }
@@ -330,7 +377,7 @@
     } catch (error) {
       if (!error.persisted && typeof adapter.cleanupPending === "function") {
         try { await adapter.cleanupPending(prepared, inserted && inserted.pending); }
-        catch (cleanupError) { error.cleanupError = cleanupError; }
+        catch (cleanupError) { error.cleanupError = cleanupError; error.retainPending = true; }
       }
       throw error;
     }
@@ -339,8 +386,9 @@
   return Object.freeze({
     getCapabilities, capabilityGate, createBusyTracker, createFreshnessTracker,
     fromAsyncResult, saveSettings, runPowerPoint, runExcel,
-    resolveInsertedShapeId, selectedShapeIdsOnSlide, chartSelectionMode, captureChartOutput, preparePptReplacement, insertPendingPptShape,
-    commitPptReplacement, replacePowerPointChart,
+    resolveInsertedShapeId, selectedShapeIdsOnSlide, excelHostRef, powerPointSlideInsertionMode,
+    resolveOwnedInsertedSlideId, chartSelectionMode, captureChartOutput, preparePptReplacement, insertPendingPptShape,
+    commitPptReplacement, replacePowerPointChart, insertPowerPointSlide,
     resolvePalette, insertExcelImageWithFallback, commitExcelReplacement, replaceExcelChart,
     powerPointIdentity, resolvePowerPointChartCandidate, encodeExcelIdentity, parseExcelIdentity, EXCEL_IDENTITY_PREFIX,
   });

@@ -201,8 +201,18 @@
     });
   }
 
+  async function withWritebackRecovery(options) {
+    const opts = options || {};
+    try { return await opts.replace(); }
+    catch (error) {
+      opts.echoes.clear(opts.chartId);
+      opts.refreshes.schedule(opts.chartId, opts.payload);
+      throw error;
+    }
+  }
+
   return Object.freeze({
     definedName, splitAddress, qualifyAddress, createRecord, resolve,
-    stableValueHash, createEchoTracker, createRefreshQueue,
+    stableValueHash, createEchoTracker, createRefreshQueue, withWritebackRecovery,
   });
 }));

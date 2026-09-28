@@ -43,3 +43,50 @@ test("expiry only cleans stale expectations", () => {
   assert.equal(echoes.consume(event), false);
 });
 
+test("a failed linked-chart replacement clears its echo and schedules a refresh", async () => {
+  const event = { chartId: "chart-a", worksheetId: "sheet-1", address: "A1", values: [[2]] };
+  const echoes = Link.createEchoTracker({ now: () => 1000, ttl: 5000 });
+  const refreshed = [];
+  const refreshes = Link.createRefreshQueue({
+    delay: 0,
+    run: async (chartId, payload) => { refreshed.push([chartId, payload]); },
+  });
+  echoes.expect(event);
+
+  await assert.rejects(
+    Link.withWritebackRecovery({
+      chartId: "chart-a", payload: { name: "TC:chart-a" }, echoes, refreshes,
+      replace: async () => { throw new Error("replacement failed"); },
+    }),
+    /replacement failed/,
+  );
+  await refreshes.idle("chart-a");
+
+  assert.equal(echoes.consume(event), false);
+  assert.deepEqual(refreshed, [["chart-a", { name: "TC:chart-a" }]]);
+});
+
+test("a named-link failure after cell write receives the same recovery coverage", async () => {
+  const event = { chartId: "chart-a", worksheetId: "sheet-1", address: "A1", values: [[3]] };
+  const echoes = Link.createEchoTracker({ now: () => 1000, ttl: 5000 });
+  const refreshed = [];
+  const refreshes = Link.createRefreshQueue({
+    delay: 0,
+    run: async (chartId, payload) => { refreshed.push([chartId, payload]); },
+  });
+
+  await assert.rejects(
+    Link.withWritebackRecovery({
+      chartId: "chart-a", payload: { name: "TC:chart-a" }, echoes, refreshes,
+      replace: async () => {
+        echoes.expect(event); // xlWriteGrid 已经写入并登记回声
+        throw new Error("defined name failed"); // 随后的 xlSetNamedLink 失败
+      },
+    }),
+    /defined name failed/,
+  );
+  await refreshes.idle("chart-a");
+
+  assert.equal(echoes.consume(event), false);
+  assert.deepEqual(refreshed, [["chart-a", { name: "TC:chart-a" }]]);
+});
