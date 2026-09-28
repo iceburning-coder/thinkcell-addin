@@ -24,6 +24,7 @@ test("PowerPoint capabilities distinguish slide insertion from shape selection",
     powerPointShapes: false,
     powerPointShapeMetadata: false,
     powerPointSelection: false,
+    powerPointGroups: false,
     excelSvg: false,
     excelCollectionEvents: false,
     excelWorksheetEvents: false,
@@ -47,6 +48,7 @@ test("missing requirement APIs fail closed while retaining baseline image insert
     powerPointShapes: false,
     powerPointShapeMetadata: false,
     powerPointSelection: false,
+    powerPointGroups: false,
     excelSvg: false,
     excelCollectionEvents: false,
     excelWorksheetEvents: false,
@@ -127,4 +129,19 @@ test("selecting a different PowerPoint chart offers an explicit edit switch", ()
   assert.equal(OfficeAdapter.chartSelectionMode(editing, { chartId: "chart-a", id: "shape-a" }), "editing");
   assert.equal(OfficeAdapter.chartSelectionMode(editing, null), "editing");
   assert.equal(OfficeAdapter.chartSelectionMode(null, { chartId: "chart-b", id: "shape-b" }), "selected");
+});
+
+test("PowerPoint 1.8 can resolve a selected child through its tracked parent group", () => {
+  const chartId = "0818a03d-9dd0-4881-94a8-e6e84014238b";
+  const record = { chartId, revision: 3 };
+  const candidates = [
+    { id: "child", name: "TextBox 3", tags: {} },
+    { id: "group", name: `TC:${chartId}`, tags: {} },
+  ];
+
+  assert.equal(OfficeAdapter.getCapabilities(officeWithSupport(new Set(["PowerPointApi:1.8"])), "ppt").powerPointGroups, true);
+  assert.deepEqual(
+    OfficeAdapter.resolvePowerPointChartCandidate(candidates, (name, id) => (id === chartId ? record : null)),
+    { shape: candidates[1], identity: { chartId, revision: 0, pendingToken: null, source: "name" }, record },
+  );
 });

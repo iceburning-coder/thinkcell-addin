@@ -2,8 +2,8 @@
 import sys, pathlib
 
 base = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "https://localhost:3000"
-ADDIN_VERSION = sys.argv[2] if len(sys.argv) > 2 else "1.0.102.0"
-ASSET_VERSION = sys.argv[3] if len(sys.argv) > 3 else "8"  # 提升这个值可绕过 Office/WKWebView 缓存
+ADDIN_VERSION = sys.argv[2] if len(sys.argv) > 2 else "1.0.103.0"
+ASSET_VERSION = sys.argv[3] if len(sys.argv) > 3 else "9"  # 提升这个值可绕过 Office/WKWebView 缓存
 ID = "8dd87d2b-8555-4f61-96bf-2fce56da2b1c"   # 固定产品 ID；更改会让 Office 无法读取旧文档 settings
 xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"

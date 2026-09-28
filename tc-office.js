@@ -27,6 +27,7 @@
     const ppt12 = host === "ppt" && supports(office, "PowerPointApi", "1.2");
     const ppt14 = host === "ppt" && supports(office, "PowerPointApi", "1.4");
     const ppt15 = host === "ppt" && supports(office, "PowerPointApi", "1.5");
+    const ppt18 = host === "ppt" && supports(office, "PowerPointApi", "1.8");
     const excel19 = host === "xl" && supports(office, "ExcelApi", "1.9");
     const excel17 = host === "xl" && (excel19 || supports(office, "ExcelApi", "1.7"));
     return {
@@ -36,6 +37,7 @@
       powerPointShapes: ppt14,
       powerPointShapeMetadata: ppt14,
       powerPointSelection: ppt15,
+      powerPointGroups: ppt18,
       excelSvg: excel19,
       excelCollectionEvents: excel19,
       excelWorksheetEvents: excel17,
@@ -251,6 +253,15 @@
     return match ? validIdentity({ chartId: match[1], revision: 0 }, "name") : null;
   }
 
+  function resolvePowerPointChartCandidate(candidates, loadRecord) {
+    for (const shape of Array.from(candidates || [])) {
+      const identity = powerPointIdentity(shape.tags, shape.name);
+      const record = typeof loadRecord === "function" ? loadRecord(shape.name, identity && identity.chartId) : null;
+      if (record && (identity || String(shape.name || "").startsWith("TC:"))) return { shape, identity, record };
+    }
+    return null;
+  }
+
   function encodeExcelIdentity(identity) {
     const valid = validIdentity(identity, "altText");
     if (!valid) throw errorWithCode("TC_IDENTITY_INVALID", "Excel 图表标识格式不正确。");
@@ -331,6 +342,6 @@
     resolveInsertedShapeId, selectedShapeIdsOnSlide, chartSelectionMode, captureChartOutput, preparePptReplacement, insertPendingPptShape,
     commitPptReplacement, replacePowerPointChart,
     resolvePalette, insertExcelImageWithFallback, commitExcelReplacement, replaceExcelChart,
-    powerPointIdentity, encodeExcelIdentity, parseExcelIdentity, EXCEL_IDENTITY_PREFIX,
+    powerPointIdentity, resolvePowerPointChartCandidate, encodeExcelIdentity, parseExcelIdentity, EXCEL_IDENTITY_PREFIX,
   });
 }));

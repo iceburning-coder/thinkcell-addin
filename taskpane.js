@@ -814,7 +814,7 @@ async function initPy() {
     $("loadmsg").textContent = "正在加载 Python 运行环境…";
     PY = await loadPyodide({ indexURL: new URL("pyodide/", location.href).href });
     $("loadmsg").textContent = "正在加载图表引擎…";
-    const buf = await (await fetch("py/pylib.zip?v=8")).arrayBuffer();
+    const buf = await (await fetch("py/pylib.zip?v=9")).arrayBuffer();
     PY.unpackArchive(buf, "zip", { extractDir: "/lib/tc" });
     PY.runPython("import sys; sys.path.insert(0, '/lib/tc'); import addin_api");
     API = PY.pyimport("addin_api");
@@ -1099,6 +1099,23 @@ async function pptInsertSlide() {
   return "已作为新幻灯片插入（全部为可编辑形状）";
 }
 // ---- 选中图表 → 载入编辑 → 更新
+async function pptShapeLineage(ctx, shape) {
+  const candidates = [];
+  let current = shape;
+  for (let depth = 0; current && depth < 8; depth += 1) {
+    current.load(OFFICE_CAPS.powerPointGroups ? "id,name,level" : "id,name");
+    await ctx.sync();
+    const tags = {};
+    try {
+      current.tags.load("items/key,items/value"); await ctx.sync();
+      current.tags.items.forEach((tag) => { tags[tag.key] = tag.value; });
+    } catch (e) { /* 名称降级 */ }
+    candidates.push({ id: current.id, name: current.name, tags });
+    if (!OFFICE_CAPS.powerPointGroups || !current.level) break;
+    try { current = current.parentGroup; } catch (e) { break; }
+  }
+  return candidates;
+}
 async function pptSelectionChanged() {
   if (HOST !== "ppt" || !OFFICE_CAPS.powerPointSelection) { SEL_CHART = null; showBanner(); return; }
   try {
@@ -1107,19 +1124,13 @@ async function pptSelectionChanged() {
       sel.load("items/id,items/name"); await ctx.sync();
       const sl = ctx.presentation.getSelectedSlides(); sl.load("items/id"); await ctx.sync();
       const x = sel.items.length === 1 ? sel.items[0] : null;
-      let identity = null;
-      if (x) {
-        const tags = {};
-        try {
-          x.tags.load("items/key,items/value"); await ctx.sync();
-          x.tags.items.forEach((tag) => { tags[tag.key] = tag.value; });
-        } catch (e) { /* 名称降级 */ }
-        identity = TC.Office.powerPointIdentity(tags, x.name);
-      }
-      const record = x ? getChartRecord(x.name, identity && identity.chartId) : null;
-      SEL_CHART = x && record
-        ? { id: x.id, name: x.name, chartId: record.chartId, revision: record.revision, slideId: sl.items[0] && sl.items[0].id,
-          hostRef: `ppt:${sl.items[0] && sl.items[0].id}:${x.id}` } : null;
+      const candidates = x ? await pptShapeLineage(ctx, x) : [];
+      const matched = TC.Office.resolvePowerPointChartCandidate(candidates, getChartRecord);
+      const tracked = matched && matched.shape;
+      const record = matched && matched.record;
+      SEL_CHART = tracked && record
+        ? { id: tracked.id, name: tracked.name, chartId: record.chartId, revision: record.revision, slideId: sl.items[0] && sl.items[0].id,
+          hostRef: `ppt:${sl.items[0] && sl.items[0].id}:${tracked.id}` } : null;
     });
   } catch (e) { SEL_CHART = null; }
   showBanner();
@@ -1792,7 +1803,7 @@ async function forkMaintenanceShape(index) {
 function maintenanceDiagnostic() {
   if (!MAINTENANCE) throw new Error("请先检查文档");
   return TC.Store.diagnosticSummary({
-    addinVersion: "1.0.102.0", engineVersion: "1", host: HOST, capabilities: OFFICE_CAPS, report: MAINTENANCE.report,
+    addinVersion: "1.0.103.0", engineVersion: "1", host: HOST, capabilities: OFFICE_CAPS, report: MAINTENANCE.report,
   });
 }
 
