@@ -823,7 +823,7 @@ async function initPy() {
     $("loadmsg").textContent = "正在加载 Python 运行环境…";
     PY = await loadPyodide({ indexURL: new URL("../pyodide/", location.href).href });
     $("loadmsg").textContent = "正在加载图表引擎…";
-    const buf = await (await fetch("../py/pylib.zip?v=9")).arrayBuffer();
+    const buf = await (await fetch("./py/pylib.zip?v=diag2")).arrayBuffer();
     PY.unpackArchive(buf, "zip", { extractDir: "/lib/tc" });
     PY.runPython("import sys; sys.path.insert(0, '/lib/tc'); import addin_api");
     API = PY.pyimport("addin_api");

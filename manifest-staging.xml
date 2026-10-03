@@ -27,30 +27,30 @@
       <Host xsi:type="Presentation">
         <DesktopFormFactor>
           <GetStarted>
-            <Title resid="Tc.Title"/>
-            <Description resid="Tc.Desc"/>
-            <LearnMoreUrl resid="Tc.Url"/>
+            <Title resid="TcDiag.Title"/>
+            <Description resid="TcDiag.Desc"/>
+            <LearnMoreUrl resid="TcDiag.Url"/>
           </GetStarted>
           <ExtensionPoint xsi:type="PrimaryCommandSurface">
             <OfficeTab id="TabHome">
-              <Group id="Tc.Group.Presentation">
-                <Label resid="Tc.Group"/>
+              <Group id="TcDiag.Group.Presentation">
+                <Label resid="TcDiag.Group"/>
                 <Icon>
-                  <bt:Image size="16" resid="Tc.I16"/>
-                  <bt:Image size="32" resid="Tc.I32"/>
-                  <bt:Image size="80" resid="Tc.I80"/>
+                  <bt:Image size="16" resid="TcDiag.I16"/>
+                  <bt:Image size="32" resid="TcDiag.I32"/>
+                  <bt:Image size="80" resid="TcDiag.I80"/>
                 </Icon>
-                <Control xsi:type="Button" id="Tc.Btn.Presentation">
-                  <Label resid="Tc.Btn"/>
-                  <Supertip><Title resid="Tc.Btn"/><Description resid="Tc.Desc"/></Supertip>
+                <Control xsi:type="Button" id="TcDiag.Btn.Presentation">
+                  <Label resid="TcDiag.Btn"/>
+                  <Supertip><Title resid="TcDiag.Btn"/><Description resid="TcDiag.Desc"/></Supertip>
                   <Icon>
-                    <bt:Image size="16" resid="Tc.I16"/>
-                    <bt:Image size="32" resid="Tc.I32"/>
-                    <bt:Image size="80" resid="Tc.I80"/>
+                    <bt:Image size="16" resid="TcDiag.I16"/>
+                    <bt:Image size="32" resid="TcDiag.I32"/>
+                    <bt:Image size="80" resid="TcDiag.I80"/>
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
-                    <TaskpaneId>TcPane</TaskpaneId>
-                    <SourceLocation resid="Tc.Url"/>
+                    <TaskpaneId>TcDiagPane</TaskpaneId>
+                    <SourceLocation resid="TcDiag.Url"/>
                   </Action>
                 </Control>
               </Group>
@@ -61,30 +61,30 @@
       <Host xsi:type="Workbook">
         <DesktopFormFactor>
           <GetStarted>
-            <Title resid="Tc.Title"/>
-            <Description resid="Tc.Desc"/>
-            <LearnMoreUrl resid="Tc.Url"/>
+            <Title resid="TcDiag.Title"/>
+            <Description resid="TcDiag.Desc"/>
+            <LearnMoreUrl resid="TcDiag.Url"/>
           </GetStarted>
           <ExtensionPoint xsi:type="PrimaryCommandSurface">
             <OfficeTab id="TabHome">
-              <Group id="Tc.Group.Workbook">
-                <Label resid="Tc.Group"/>
+              <Group id="TcDiag.Group.Workbook">
+                <Label resid="TcDiag.Group"/>
                 <Icon>
-                  <bt:Image size="16" resid="Tc.I16"/>
-                  <bt:Image size="32" resid="Tc.I32"/>
-                  <bt:Image size="80" resid="Tc.I80"/>
+                  <bt:Image size="16" resid="TcDiag.I16"/>
+                  <bt:Image size="32" resid="TcDiag.I32"/>
+                  <bt:Image size="80" resid="TcDiag.I80"/>
                 </Icon>
-                <Control xsi:type="Button" id="Tc.Btn.Workbook">
-                  <Label resid="Tc.Btn"/>
-                  <Supertip><Title resid="Tc.Btn"/><Description resid="Tc.Desc"/></Supertip>
+                <Control xsi:type="Button" id="TcDiag.Btn.Workbook">
+                  <Label resid="TcDiag.Btn"/>
+                  <Supertip><Title resid="TcDiag.Btn"/><Description resid="TcDiag.Desc"/></Supertip>
                   <Icon>
-                    <bt:Image size="16" resid="Tc.I16"/>
-                    <bt:Image size="32" resid="Tc.I32"/>
-                    <bt:Image size="80" resid="Tc.I80"/>
+                    <bt:Image size="16" resid="TcDiag.I16"/>
+                    <bt:Image size="32" resid="TcDiag.I32"/>
+                    <bt:Image size="80" resid="TcDiag.I80"/>
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
-                    <TaskpaneId>TcPane</TaskpaneId>
-                    <SourceLocation resid="Tc.Url"/>
+                    <TaskpaneId>TcDiagPane</TaskpaneId>
+                    <SourceLocation resid="TcDiag.Url"/>
                   </Action>
                 </Control>
               </Group>
@@ -95,20 +95,20 @@
     </Hosts>
     <Resources>
       <bt:Images>
-        <bt:Image id="Tc.I16" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/assets/icon-16.png"/>
-        <bt:Image id="Tc.I32" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/assets/icon-32.png"/>
-        <bt:Image id="Tc.I80" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/assets/icon-80.png"/>
+        <bt:Image id="TcDiag.I16" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/assets/icon-16.png"/>
+        <bt:Image id="TcDiag.I32" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/assets/icon-32.png"/>
+        <bt:Image id="TcDiag.I80" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/assets/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="Tc.Url" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag1"/>
+        <bt:Url id="TcDiag.Url" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag1"/>
       </bt:Urls>
       <bt:ShortStrings>
-        <bt:String id="Tc.Title" DefaultValue="think-cell 图表（诊断版）"/>
-        <bt:String id="Tc.Group" DefaultValue="咨询图表"/>
-        <bt:String id="Tc.Btn" DefaultValue="think-cell 图表（诊断版）"/>
+        <bt:String id="TcDiag.Title" DefaultValue="think-cell 图表（诊断版）"/>
+        <bt:String id="TcDiag.Group" DefaultValue="咨询图表"/>
+        <bt:String id="TcDiag.Btn" DefaultValue="think-cell 图表（诊断版）"/>
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="Tc.Desc" DefaultValue="打开图表面板：粘贴或选中数据，生成瀑布、Mekko、CAGR 箭头等咨询风格图表并插入。"/>
+        <bt:String id="TcDiag.Desc" DefaultValue="打开图表面板：粘贴或选中数据，生成瀑布、Mekko、CAGR 箭头等咨询风格图表并插入。"/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
