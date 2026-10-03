@@ -1,9 +1,10 @@
-"""生成 Office 加载项 manifest：python make_manifest.py https://<用户名>.github.io/<仓库名>"""
-import sys, uuid, pathlib
+"""生成 Office manifest：python make_manifest.py <base-url> [addin-version] [asset-version]。"""
+import sys, pathlib
 
 base = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "https://localhost:3000"
-VER = sys.argv[2] if len(sys.argv) > 2 else "3"   # 改这个数字可强制 Office 重新加载面板（绕过缓存）
-ID = "5c1f7b8e-3a2d-4c6e-9b0f-7d2e4a1c8b93"   # 固定 ID，更新 manifest 时保持不变
+ADDIN_VERSION = sys.argv[2] if len(sys.argv) > 2 else "1.0.103.0"
+ASSET_VERSION = sys.argv[3] if len(sys.argv) > 3 else "9"  # 提升这个值可绕过 Office/WKWebView 缓存
+ID = "8dd87d2b-8555-4f61-96bf-2fce56da2b1c"   # 固定产品 ID；更改会让 Office 无法读取旧文档 settings
 xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -11,7 +12,7 @@ xml = f"""<?xml version="1.0" encoding="UTF-8"?>
            xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
            xsi:type="TaskPaneApp">
   <Id>{ID}</Id>
-  <Version>1.0.{VER}.0</Version>
+  <Version>{ADDIN_VERSION}</Version>
   <ProviderName>Xiaowu</ProviderName>
   <DefaultLocale>zh-CN</DefaultLocale>
   <DisplayName DefaultValue="think-cell 风格图表"/>
@@ -25,7 +26,7 @@ xml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <Host Name="Workbook"/>
   </Hosts>
   <DefaultSettings>
-    <SourceLocation DefaultValue="{base}/taskpane.html?v={VER}"/>
+    <SourceLocation DefaultValue="{base}/taskpane.html?v={ASSET_VERSION}"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
@@ -72,7 +73,7 @@ xml = f"""<?xml version="1.0" encoding="UTF-8"?>
         <bt:Image id="Tc.I80" DefaultValue="{base}/assets/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="Tc.Url" DefaultValue="{base}/taskpane.html?v={VER}"/>
+        <bt:Url id="Tc.Url" DefaultValue="{base}/taskpane.html?v={ASSET_VERSION}"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="Tc.Title" DefaultValue="think-cell 风格图表"/>

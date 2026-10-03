@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "type": "column",
+  "data": "Category\tRevenue\n2025\t10\n2026\t12",
+  "title": "Legacy v1",
+  "subtitle": "USD million",
+  "theme": "consulting",
+  "opt": {},
+  "ann": {},
+  "colors": {}
+}

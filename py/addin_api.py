@@ -13,11 +13,17 @@ def _fig(spec_json):
 
 def render(spec_json):
     """→ JSON {svg, width, height, meta}"""
-    f = _fig(spec_json)
-    return json.dumps({"svg": f.c.to_svg(False), "width": f.W, "height": f.H,
-                       "meta": [{"annotation": m["annotation"], "value": m["value"]}
-                                for m in f.meta if isinstance(m["value"], (int, float, str))]},
-                      ensure_ascii=False)
+    try:
+        f = _fig(spec_json)
+        return json.dumps({"svg": f.c.to_svg(False), "width": f.W, "height": f.H,
+                           "meta": [{"annotation": m["annotation"], "value": m["value"]}
+                                    for m in f.meta if isinstance(m["value"], (int, float, str))]},
+                          ensure_ascii=False)
+    except (ValueError, KeyError, TypeError, ZeroDivisionError) as exc:
+        message = " ".join(str(exc).splitlines())[:500] or "Invalid chart input"
+        return json.dumps({"error": {"code": "TC_ENGINE_INVALID_INPUT", "message": message}}, ensure_ascii=False)
+    except Exception:
+        return json.dumps({"error": {"code": "TC_ENGINE_RENDER_FAILED", "message": "Chart rendering failed"}}, ensure_ascii=False)
 
 
 def render_pptx(spec_json, slide_w_in=13.333, slide_h_in=7.5, name=""):

@@ -1,9 +1,8 @@
-"""把 skill 里最新的 tccore 引擎打包进插件：python build_pylib.py
-（skill 的图表引擎更新后运行一次，再把 py/pylib.zip 上传到 GitHub 即可）"""
+"""把仓库内经过审查的 tccore 引擎打包进插件：python build_pylib.py。"""
 import os, pathlib, shutil, tempfile, zipfile, importlib.util
 
 here = pathlib.Path(__file__).resolve().parent
-tccore = here.parent / "scripts" / "tccore"
+tccore = here / "py" / "tccore"
 out = here / "py" / "pylib.zip"
 tmp = pathlib.Path(tempfile.mkdtemp())
 shutil.copytree(tccore, tmp / "tccore", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))

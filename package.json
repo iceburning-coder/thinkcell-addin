@@ -1,0 +1,9 @@
+{
+  "name": "thinkcell-addin",
+  "private": true,
+  "scripts": {
+    "test:js": "node --test tests/js/*.test.cjs",
+    "test:py": "PYTHONPYCACHEPREFIX=/private/tmp/tc-pycache python3 -m unittest discover -s tests/python -p 'test_*.py' -v",
+    "test": "npm run test:js && npm run test:py"
+  }
+}
