@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="X-UA-Compatible" content="IE=Edge">
+<title>think-cell 风格图表（诊断版）</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<link rel="stylesheet" href="taskpane.css?v=9">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="logo"></span>think-cell 风格图表 <span class="diag-badge">诊断版</span></div>
+  <div id="host" class="host">浏览器预览模式</div>
+</header>
+<div class="diag-strip">诊断版 · PowerPoint 选区日志默认开启，仅保存在当前任务窗格内存中</div>
+
+<main>
+  <div id="loading" class="loading">
+    <div class="spinner"></div>
+    <div><b id="loadmsg">正在加载图表引擎…</b><br><small>首次约 20 MB，之后浏览器会缓存</small></div>
+  </div>
+
+  <div id="editBanner" class="banner hide">
+    <span id="editMsg">已选中一张 think-cell 图表</span>
+    <span class="btns"><button id="btnLoadSel" class="ghost">载入编辑</button><button id="btnNewChart" class="ghost hide">改为新建</button></span>
+  </div>
+
+  <section class="card">
+    <label class="row">
+      <span>图表类型</span>
+      <select id="type"></select>
+    </label>
+    <p id="typehint" class="hint"></p>
+  </section>
+
+  <section class="card">
+    <div class="rowhead">
+      <span>数据 <small>（第一行为表头；可从 Excel 直接粘贴到任意格）</small></span>
+      <span class="btns">
+        <button id="btnSel" class="ghost xl-only" title="读取 Excel 当前选中区域">读取选区</button>
+        <button id="btnSample" class="ghost">示例</button>
+      </span>
+    </div>
+    <div class="gridbar">
+      <button class="ghost" data-g="addRow" title="在当前行下方加一行">+行</button>
+      <button class="ghost" data-g="addCol" title="在当前列右侧加一列">+列</button>
+      <button class="ghost" data-g="delRow" title="删除当前行">−行</button>
+      <button class="ghost" data-g="delCol" title="删除当前列">−列</button>
+      <button class="ghost" data-g="transpose" title="行列互换">转置</button>
+      <button class="ghost" data-g="clear" title="清空">清空</button>
+      <button class="ghost" data-g="text" title="切换为文本编辑">文本</button>
+      <button class="ghost" data-g="copyData" title="复制为表格，可直接 ⌘V 到 Excel">复制数据</button>
+      <button class="ghost" data-g="copyChart" title="复制整张图（类型 + 数据 + 设置），到 PPT / Excel 的面板里任意格子 ⌘V">复制图表</button>
+    </div>
+    <div id="grid" class="grid"></div>
+    <textarea id="data" spellcheck="false" rows="7" class="hide"></textarea>
+    <p id="dataErr" class="err"></p>
+  </section>
+
+  <section class="card">
+    <label class="row"><span>标题</span><input id="title" placeholder="写结论，如：市场 4 年复合增长 8.6%"></label>
+    <label class="row"><span>副标题</span><input id="subtitle" placeholder="指标，单位"></label>
+    <label class="row"><span>来源</span><input id="source" placeholder="可留空"></label>
+    <div class="grid3">
+      <label><span>主题</span>
+        <select id="theme"><option value="consulting">咨询蓝</option><option value="semi">半导体</option><option value="dark">深色</option><option value="custom">公司配色…</option></select></label>
+      <label><span>小数位</span>
+        <select id="dec"><option value="">自动</option><option>0</option><option>1</option><option>2</option></select></label>
+      <label><span>尺寸</span>
+        <select id="size"><option value="680x400">宽 16:9</option><option value="680x480">标准</option><option value="480x400">半页</option><option value="680x300">矮条</option><option value="560x560">方形</option><option value="760x520">高（甘特 / 表格）</option><option value="960x540">大 16:9</option></select></label>
+      <label><span>图例</span>
+        <select id="legend"><option value="auto">自动</option><option value="label">标在图上</option><option value="top">顶部</option><option value="bottom">底部</option><option value="side">右侧竖排</option><option value="none">不显示</option></select></label>
+      <label><span>数量级</span>
+        <select id="mag" title="把数据按数量级缩小显示（数据本身不变）"><option value="1">原值</option><option value="1e3">÷ 千</option><option value="1e4">÷ 万</option><option value="1e6">÷ 百万</option><option value="1e8">÷ 亿</option><option value="1e9">÷ 十亿</option></select></label>
+      <label class="chk" style="align-self:end"><input type="checkbox" id="legendRev"> 图例反序</label>
+    </div>
+    <div id="themeEd" class="themeed hide">
+      <div class="rowhead"><span>公司配色 <small>（保存在本机，所有图表通用）</small></span><button id="btnThemeReset" class="ghost">恢复默认</button></div>
+      <div class="swatches" id="themeSw"></div>
+    </div>
+  </section>
+
+  <section class="card" id="optCard">
+    <div class="rowhead"><span>图表选项</span></div>
+    <div id="opts"></div>
+  </section>
+
+  <section class="card" id="colorCard">
+    <div class="rowhead"><span>系列颜色 <small>（点色块修改，↺ 恢复自动）</small></span></div>
+    <div id="colors" class="colors"></div>
+  </section>
+
+  <section class="card" id="annCard">
+    <div class="rowhead"><span>注释</span></div>
+    <div id="anns"></div>
+  </section>
+
+  <section class="card">
+    <div class="rowhead">
+      <span>预览</span>
+      <span id="meta" class="meta"></span>
+    </div>
+    <div id="preview" class="preview"><div class="empty">填好数据后自动预览</div></div>
+  </section>
+
+  <section class="actions">
+    <div class="ppt-only">
+      <button id="btnUpdate" class="primary hide">更新所选图表</button>
+      <button id="btnSvgPpt" class="primary">插入到当前页</button>
+      <button id="btnSlide">作为新幻灯片插入（可编辑形状）</button>
+      <p class="hint">以后选中这张图，面板会提示「载入编辑」，改完点「更新所选图表」即在原位置替换。先选中一个形状或占位符再插入，图会放进它的位置。右键 →「转换为形状」可逐个编辑（转换后不再能用面板更新）。<br>和 Excel 互通：在 Excel 里选中数据 ⌘C，到这里任意格子 ⌘V；或在 Excel 面板点「复制图表」，到这里 ⌘V 带过来整张图。改好的数据用「复制数据」可贴回 Excel。</p>
+    </div>
+    <div class="xl-only">
+      <label class="row"><span>本表图表</span><select id="xlCharts"><option value="">（新建）</option></select></label>
+      <button id="btnUpdateXl" class="primary hide">更新所选图表</button>
+      <button id="btnSvgXl" class="primary">插入图表（高保真）</button>
+      <button id="btnNative">插入 Excel 原生图表（可改数据）</button>
+      <button id="btnWriteXl">把面板数据写入所选单元格</button>
+      <p class="hint">链接：先「读取选区」或「把面板数据写入所选单元格」，再插入高保真图，图就和这些单元格链接（列表里带 🔗）——改单元格，图自动重画；在面板里改数据再点「更新」，会写回单元格。自动更新需要面板开着。<br>和 PPT 互通：点数据区的「复制图表」，到 PPT 面板任意格子 ⌘V，整张图（类型、数据、设置）就过去了；反过来也一样。</p>
+    </div>
+    <div class="web-only">
+      <button id="btnDlSvg" class="primary">下载 SVG</button>
+      <button id="btnDlPng">下载 PNG</button>
+      <button id="btnDlPptx">下载 PPTX</button>
+    </div>
+    <p id="status" class="status"></p>
+  </section>
+
+  <details id="docHealth" class="card adv office-only">
+    <summary>文档状态与恢复</summary>
+    <div class="maintbar">
+      <button id="btnDocCheck" class="ghost">检查文档</button>
+      <button id="btnCopyDiag" class="ghost" disabled>复制诊断信息</button>
+      <label class="chk ppt-only"><input type="checkbox" id="selectionDiagToggle"> 选区诊断</label>
+      <button id="btnCopySelectionDiag" class="ghost ppt-only" disabled>复制选区诊断日志</button>
+    </div>
+    <p id="docHealthSummary" class="hint">检查未完成更新、重复图表、孤立状态和 Excel 断链；不会自动删除任何内容。</p>
+    <div id="docIssues" class="issues"></div>
+  </details>
+
+  <details class="card adv">
+    <summary>高级：JSON 规格（可直接编辑，支持引擎全部参数）</summary>
+    <textarea id="json" spellcheck="false" rows="12"></textarea>
+    <div class="btns"><button id="btnJson" class="ghost">按 JSON 重新生成</button>
+      <label class="chk"><input type="checkbox" id="jsonLock"> 锁定 JSON（不再从表单覆盖）</label></div>
+  </details>
+</main>
+<script src="../pyodide/pyodide.js"></script>
+<script src="tc-state.js?v=diag1"></script>
+<script src="tc-selection-diagnostics.js?v=diag1"></script>
+<script src="tc-office.js?v=diag1"></script>
+<script src="tc-store.js?v=diag1"></script>
+<script src="tc-link.js?v=diag1"></script>
+<script src="taskpane.js?v=diag1"></script>
+</body>
+</html>
