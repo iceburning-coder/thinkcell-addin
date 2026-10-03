@@ -13,7 +13,7 @@ html, body { margin: 0; background: var(--bg); color: var(--fg);
 .brand { font-weight: 700; display: flex; gap: 8px; align-items: center; }
 .logo { width: 14px; height: 14px; background: linear-gradient(to top, #fff 0 45%, #7FB2DC 45% 75%, #E4572E 75%); border-radius: 2px; }
 .diag-badge { padding: 2px 6px; border: 1px solid #FFD57A; border-radius: 999px; background: #7A4B00; color: #FFF3D1; font-size: 10px; letter-spacing: .04em; }
-.diag-strip { position: sticky; top: 0; z-index: 6; padding: 7px 10px; border-bottom: 1px solid #E1A72B; background: #FFF3CD; color: #604400; font-size: 11px; font-weight: 700; text-align: center; }
+.diag-strip { padding: 7px 10px; border-bottom: 1px solid #E1A72B; background: #FFF3CD; color: #604400; font-size: 11px; font-weight: 700; text-align: center; }
 .host { font-size: 11px; opacity: .8; }
 main { padding: 10px; display: flex; flex-direction: column; gap: 10px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
@@ -65,6 +65,7 @@ body.ppt .bar, body.xl .bar { display: none; }
 .banner { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #EAF2FB; color: #0B2D4F;
   border: 1px solid #B9D5EC; border-radius: 8px; padding: 8px 10px; font-size: 12.5px; position: sticky; top: 0; z-index: 4; }
 .banner.editing { background: #FFF1EC; border-color: #F3C3B3; color: #7A2A12; }
+.banner.warning { background: #FFF8E6; border-color: #E6C77A; color: #5C4400; }
 .gridbar { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
 .grid { overflow: auto; max-height: 260px; border: 1px solid var(--line); border-radius: 5px; background: var(--card); }
 .grid table { border-collapse: collapse; font: 12px ui-monospace, Menlo, Consolas, monospace; }

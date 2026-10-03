@@ -114,6 +114,7 @@ const required = [
   "staging/tc-selection-diagnostics.js",
   "staging/tc-office.js",
   "staging/tc-store.js",
+  "staging/tc-identity-repair.js",
   "staging/tc-link.js",
   "staging/py/pylib.zip",
   "staging/assets/icon-16.png",
@@ -144,9 +145,28 @@ for (const [name, markup, rejectedAttribute] of [
 }
 
 const html = read("staging/taskpane.html");
+const css = read("staging/taskpane.css");
 assert.match(html, /<title>[^<]*诊断版[^<]*<\/title>/);
 assert.match(html, /class="brand"[^>]*>[^<]*<span[^>]*><\/span>think-cell 风格图表[^<]*<span class="diag-badge">诊断版<\/span>/);
-assert.match(html, /src="taskpane\.js\?v=diag2"/);
+assert.match(html, /href="taskpane\.css\?v=diag3"/);
+assert.match(html, /src="tc-identity-repair\.js\?v=diag3"/);
+assert.match(html, /src="taskpane\.js\?v=diag3"/);
+assert.doesNotMatch(html, /\?v=(?!diag3)[^"']+/, "every staging cache key must be diag3");
+const diagnosticStripIndex = html.indexOf('class="diag-strip"');
+const editBannerIndex = html.indexOf('id="editBanner"');
+assert.ok(diagnosticStripIndex >= 0, "diagnostic strip missing");
+assert.ok(editBannerIndex >= 0, "edit banner missing");
+assert.ok(
+  diagnosticStripIndex < editBannerIndex,
+  "diagnostic strip must precede the edit banner in document order",
+);
+const diagnosticRule = css.match(/\.diag-strip\s*\{[^}]*\}/s);
+assert.ok(diagnosticRule, "diagnostic strip CSS rule missing");
+assert.doesNotMatch(
+  diagnosticRule[0],
+  /position\s*:\s*(?:fixed|absolute|sticky)/,
+  "diagnostic strip must stay in normal document flow so it cannot cover the edit banner",
+);
 for (const match of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
   const reference = match[1];
   if (/^(?:https?:|data:|#)/.test(reference)) continue;
@@ -158,7 +178,7 @@ const js = read("staging/taskpane.js");
 assert.match(js, /const DIAG_STORE_KEY = "diag-staging";/);
 assert.match(js, /store\.get\(DIAG_STORE_KEY, 1\)/);
 assert.match(js, /new URL\("\.\.\/pyodide\/", location\.href\)/);
-assert.match(js, /fetch\("\.\/py\/pylib\.zip\?v=diag2"\)/);
+assert.match(js, /fetch\("\.\/py\/pylib\.zip\?v=diag3"\)/);
 
 const formalManifest = read("manifest.xml");
 const stagingManifest = read("manifest-staging.xml");
@@ -175,7 +195,7 @@ assert.doesNotMatch(stagingManifest, /(?:id|resid)="Tc\./, "diagnostic manifest 
 assert.match(stagingManifest, /<TaskpaneId>TcDiagPane<\/TaskpaneId>/);
 assert.match(stagingManifest, /<Host Name="Presentation"\/>/);
 assert.match(stagingManifest, /<Host Name="Workbook"\/>/);
-const stagingUrl = "https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag1";
+const stagingUrl = "https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag3";
 assert.ok(stagingManifest.split(stagingUrl).length >= 3, "both SourceLocation values must use staging URL");
 
 const protectedPaths = [

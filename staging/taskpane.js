@@ -14,6 +14,7 @@ const RENDER_LIFECYCLE = TC.State.createRenderLifecycle();
 let SEL_ADDRESS = null;     // Excel：读取选区的地址（原生图表用）
 let EDIT = null;            // 正在编辑的已插入图表 {name, id, slideId}
 let SEL_CHART = null;       // PowerPoint 当前选中的插件图表
+let SEL_CHART_ISSUE = null; // 带插件身份痕迹、但无法安全解析的 PowerPoint 形状
 const PREFIX = "TC:";
 const DEMO_TITLE = "Chiller 市场 4 年复合增长 8.6%";       // 插件图表的形状名前缀；图表设置存于文档 settings[形状名]
 
@@ -823,7 +824,7 @@ async function initPy() {
     $("loadmsg").textContent = "正在加载 Python 运行环境…";
     PY = await loadPyodide({ indexURL: new URL("../pyodide/", location.href).href });
     $("loadmsg").textContent = "正在加载图表引擎…";
-    const buf = await (await fetch("./py/pylib.zip?v=diag2")).arrayBuffer();
+    const buf = await (await fetch("./py/pylib.zip?v=diag3")).arrayBuffer();
     PY.unpackArchive(buf, "zip", { extractDir: "/lib/tc" });
     PY.runPython("import sys; sys.path.insert(0, '/lib/tc'); import addin_api");
     API = PY.pyimport("addin_api");
@@ -908,13 +909,7 @@ async function saveChartState(name, state) {
   return store.save(record);
 }
 function prepareChartRecord(state, existing, hostName) {
-  const record = TC.State.normalize(state, { mode: "write" });
-  record.chartId = record.chartId || (existing && existing.chartId) || TC.State.createChartId();
-  record.revision = Math.max(record.revision || 0, (existing && existing.revision) || 0) + 1;
-  record.meta = Object.assign({}, (existing && existing.meta) || {}, record.meta || {});
-  if (hostName) record.meta.hostName = hostName;
-  if (existing && !existing.chartId && hostName) record.meta.legacyKey = hostName;
-  return record;
+  return TC.Store.prepareChartRecord(state, existing, hostName, TC.State);
 }
 function operationToken() { return `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
 async function runChartOperation(record, kind, operation) {
@@ -1226,7 +1221,7 @@ async function pptSelectionChanged(trigger) {
   });
   const details = { slideId: null, candidates: [], parentTrace: [], resolution: null };
   if (HOST !== "ppt" || !OFFICE_CAPS.powerPointSelection) {
-    PPT_SELECTION_DIAG.settle(request, details, () => { SEL_CHART = null; showBanner(); });
+    PPT_SELECTION_DIAG.settle(request, details, () => { SEL_CHART = null; SEL_CHART_ISSUE = null; showBanner(); });
     return;
   }
   try {
@@ -1240,23 +1235,35 @@ async function pptSelectionChanged(trigger) {
       const lineage = x ? await pptShapeLineage(ctx, x, details.parentTrace) : { candidates: [], loggedCandidates: [] };
       details.candidates = lineage.loggedCandidates;
       const matched = TC.Office.resolvePowerPointChartCandidate(lineage.candidates, getChartRecord);
+      const issue = TC.Office.powerPointSelectionIssue(lineage.candidates, matched);
       details.resolution = pptResolutionDiagnostic(matched);
+      details.issue = issue;
       const tracked = matched && matched.shape;
       const record = matched && matched.record;
       nextSelection = tracked && record
         ? { id: tracked.id, name: tracked.name, chartId: record.chartId, revision: record.revision, slideId: details.slideId,
           hostRef: `ppt:${details.slideId}:${tracked.id}` } : null;
+      details.nextIssue = issue;
     });
-    PPT_SELECTION_DIAG.settle(request, details, () => { SEL_CHART = nextSelection; showBanner(); });
+    PPT_SELECTION_DIAG.settle(request, details, () => {
+      SEL_CHART = nextSelection; SEL_CHART_ISSUE = details.nextIssue || null; showBanner();
+    });
   } catch (e) {
     details.error = e;
-    PPT_SELECTION_DIAG.settle(request, details, () => { SEL_CHART = null; showBanner(); });
+    PPT_SELECTION_DIAG.settle(request, details, () => { SEL_CHART = null; SEL_CHART_ISSUE = null; showBanner(); });
   }
 }
 function showBanner() {
   const b = $("editBanner");
   const selectionMode = TC.Office.chartSelectionMode(EDIT, SEL_CHART);
-  if (selectionMode === "editing") {
+  $("btnRecoverSel").classList.add("hide");
+  b.classList.remove("editing", "warning");
+  if (SEL_CHART_ISSUE && SEL_CHART_ISSUE.kind === "ungrouped") {
+    b.classList.remove("hide"); b.classList.add("warning");
+    $("editMsg").textContent = "这个形状带有图表标记，但本文档里找不到对应的图表状态（可能已被取消组合、来自其他文件或状态丢失）；不能再用面板更新，可以在『文档状态与恢复』中查看或重新生成整图";
+    $("btnLoadSel").classList.add("hide"); $("btnNewChart").classList.add("hide");
+    $("btnRecoverSel").classList.remove("hide");
+  } else if (selectionMode === "editing") {
     b.classList.remove("hide"); b.classList.add("editing");
     $("editMsg").textContent = "正在编辑：" + (EDIT.title || "图表") + "（改完点「更新所选图表」）";
     $("btnLoadSel").textContent = "载入编辑";
@@ -1268,18 +1275,19 @@ function showBanner() {
     $("btnLoadSel").textContent = selectionMode === "switch" ? "切换编辑" : "载入编辑";
     $("btnLoadSel").classList.remove("hide"); $("btnNewChart").classList.add("hide");
   } else b.classList.add("hide");
-  $("btnUpdate").classList.toggle("hide", !EDIT || HOST !== "ppt" || selectionMode === "switch");
+  $("btnUpdate").classList.toggle("hide", !EDIT || HOST !== "ppt" || selectionMode === "switch" || !!SEL_CHART_ISSUE);
   $("btnUpdateXl").classList.toggle("hide", !EDIT || HOST !== "xl");
 }
 async function loadSelectedChart() {
   if (!SEL_CHART) return;
-  const forked = await ensureUniqueIdentityForEdit(SEL_CHART.hostRef);
-  if (forked) Object.assign(SEL_CHART, { name: forked.name, chartId: forked.record.chartId, revision: forked.record.revision });
+  const identityEdit = await inspectHostIdentityForEdit(SEL_CHART.hostRef);
   const st = getChartState(SEL_CHART.name, SEL_CHART.chartId);
   if (!st) return;
-  EDIT = Object.assign({}, SEL_CHART, { title: st.title });
+  EDIT = Object.assign({}, SEL_CHART, { title: st.title, identityEdit });
   applyState(st); render(); showBanner();
-  status("已载入所选图表的数据和设置", "ok");
+  status(identityEdit.action === "fork-on-save"
+    ? "这是复制出来的图；载入过程未修改文档，第一次更新时会自动拆分为独立图表"
+    : "已载入所选图表的数据和设置", "ok");
 }
 function endEdit(restore) {
   EDIT = null;
@@ -1291,7 +1299,10 @@ async function pptUpdate() {
   requireCapability("powerPointSelection", "当前 PowerPoint 版本不支持原位编辑图表");
   const existing = getChartRecord(EDIT.name, EDIT.chartId);
   if (!existing) throw new Error("找不到该图表的文档状态");
-  const record = prepareChartRecord(panelState(), existing, EDIT.name);
+  const fork = EDIT.identityEdit && EDIT.identityEdit.action === "fork-on-save"
+    ? await confirmHostIdentityForkForSave(EDIT.identityEdit) : null;
+  let record = prepareChartRecord(panelState(), fork ? null : existing, fork ? null : EDIT.name);
+  if (fork) record = TC.IdentityRepair.prepareForkedRecord({ panelRecord: record, fork });
   const name = newChartName(record.chartId); record.meta.hostName = name;
   const output = TC.Office.captureChartOutput(LAST);
   const edit = Object.assign({}, EDIT);
@@ -1304,7 +1315,8 @@ async function pptUpdate() {
     if (error.recoverableDuplicate) error.message += "；旧图与新图均保留，请确认新图后手动删除旧图";
     throw error;
   }
-  EDIT.id = result.pending.id; EDIT.name = name; EDIT.chartId = record.chartId; EDIT.revision = record.revision; EDIT.title = $("title").value;
+  EDIT.id = result.pending.id; EDIT.name = name; EDIT.chartId = record.chartId; EDIT.revision = record.revision;
+  EDIT.title = $("title").value; EDIT.identityEdit = { action: "keep" };
   showBanner();
   return "已在原位置更新（宽度保持不变）";
 }
@@ -1859,7 +1871,7 @@ function renderMaintenance(report) {
     `Excel 数据链接已失效 <code>${esc(item.chartId)}</code><br>`, HOST === "xl" ? "relink" : null, "链接到当前选区", `data-id="${esc(item.chartId)}"`,
   )));
   report.orphans.forEach((item) => issues.push(maintenanceIssue(
-    `存在没有对应形状的图表状态 <code>${esc(item.chartId)}</code><br>`, "inspect", "查看信息", `data-id="${esc(item.chartId)}"`,
+    `存在没有对应形状的图表状态 <code>${esc(item.chartId)}</code><br>`, "regenerate", "载入以重新生成", `data-id="${esc(item.chartId)}"`,
   )));
   if (report.untracked.length) issues.push(maintenanceIssue(`发现 ${report.untracked.length} 个没有可用状态的 TC: 形状；未作修改。`, null));
   if (report.legacyKeys.length) issues.push(maintenanceIssue(`仍保留 ${report.legacyKeys.length} 个旧版状态键；仅兼容读取，不会自动删除。`, null));
@@ -1894,28 +1906,53 @@ async function relinkMaintenanceChart(chartId) {
   await checkDocumentMaintenance();
   return `已重新链接到 ${record.link.lastAddress}`;
 }
-async function forkReconciledShape(item, refreshMaintenance) {
-  const record = item.forkRecord, shape = item.shape;
-  const finalName = newChartName(record.chartId);
-  record.meta = Object.assign({}, record.meta, { hostName: finalName, hostRef: shape.hostRef });
-  await documentStore().save(record);
+function loadMaintenanceOrphan(chartId) {
+  const record = documentStore().load(chartId);
+  const state = flattenChartRecord(record);
+  if (!state) throw new Error("该图表状态已不存在");
+  EDIT = null;
+  applyState(state); render(); showBanner();
+  return "已载入孤立图表状态；请点“插入到当前页”重新生成整图，散开的原形状不会被修改";
+}
+async function retagReconciledShape({ record, shape, name }) {
   if (HOST === "xl") {
     await xlRun(async (ctx) => {
       const target = ctx.workbook.worksheets.getItem(shape.sheetName).shapes.getItem(shape.name);
-      target.name = finalName;
+      target.name = name;
       try { target.altTextDescription = TC.Office.encodeExcelIdentity({ chartId: record.chartId, revision: record.revision, title: record.chart.title || "" }); } catch (e) { /* 名称仍可识别 */ }
       await ctx.sync();
     });
   } else if (HOST === "ppt") {
     await pptRun(async (ctx) => {
       const target = ctx.presentation.slides.getItem(shape.slideId).shapes.getItem(shape.shapeId);
-      target.name = finalName;
+      target.name = name;
       try { target.tags.add("TCCHART", "3"); target.tags.add("TC_CHART_ID", record.chartId); target.tags.add("TC_REVISION", String(record.revision)); } catch (e) { /* 名称仍可识别 */ }
       await ctx.sync();
     });
   }
+}
+async function repairReconciledShape(report, hostRef, refreshMaintenance) {
+  const repaired = await TC.IdentityRepair.ensureUniqueIdentityForEdit({
+    report, hostRef, store: documentStore(), retag: retagReconciledShape, nameForChart: newChartName,
+  });
   if (refreshMaintenance) await checkDocumentMaintenance();
-  return { record, name: finalName };
+  return repaired;
+}
+async function identityReport(refreshSettings) {
+  const store = documentStore();
+  if (!store) throw new Error("当前文档不支持图表身份检查");
+  if (refreshSettings && typeof store.refresh === "function") await store.refresh();
+  const classified = store.classifyRecords();
+  const records = classified.records.map((entry) => entry.record).filter(Boolean);
+  const shapes = await scanHostShapes();
+  return TC.Store.maintenanceReport({ records, shapes, pending: classified.pending, legacyNames: classified.legacyNames });
+}
+async function inspectHostIdentityForEdit(hostRef) {
+  if (!hostRef) return { action: "unknown" };
+  return TC.IdentityRepair.inspectIdentityForEdit({ report: await identityReport(true), hostRef });
+}
+async function confirmHostIdentityForkForSave(session) {
+  return TC.IdentityRepair.confirmForkForSave({ report: await identityReport(true), session });
 }
 async function ensureUniqueIdentityForEdit(hostRef) {
   if (!hostRef) return null;
@@ -1924,16 +1961,15 @@ async function ensureUniqueIdentityForEdit(hostRef) {
   const records = classified.records.map((entry) => entry.record).filter(Boolean);
   const shapes = await scanHostShapes();
   const report = TC.Store.maintenanceReport({ records, shapes, pending: classified.pending, legacyNames: classified.legacyNames });
-  const disposition = TC.Store.editDisposition(report, hostRef);
-  if (disposition.action === "ambiguous") throw new Error("该图表与多个副本共用标识，无法判断原件；请在“文档状态与恢复”中检查");
-  if (disposition.action !== "fork") return null;
-  const forked = await forkReconciledShape(disposition.item, false);
+  const forked = await repairReconciledShape(report, hostRef, false);
+  if (!forked) return null;
   status("检测到复制的图表，已为该副本分配独立标识", "ok");
   return forked;
 }
 async function forkMaintenanceShape(index) {
   if (!MAINTENANCE || !MAINTENANCE.report.forks[index]) throw new Error("该副本状态已变化，请重新检查文档");
-  await forkReconciledShape(MAINTENANCE.report.forks[index], true);
+  const item = MAINTENANCE.report.forks[index];
+  await repairReconciledShape({ forks: [item], duplicates: [], matches: [] }, item.shape.hostRef, true);
   return "已将复制的形状设为独立图表；原图和副本均保留";
 }
 function maintenanceDiagnostic() {
@@ -2001,6 +2037,12 @@ function wire() {
   $("theme").addEventListener("change", () => { COLOR_KEY = ""; renderThemeEditor(); schedule(); });
   $("btnSample").onclick = () => { setData(T[$("type").value].sample); COLORS = {}; renderOpts(); schedule(); };
   $("btnLoadSel").onclick = () => loadSelectedChart().catch((e) => status("载入图表失败：" + (e.message || e), "bad"));
+  $("btnRecoverSel").onclick = async () => {
+    const panel = $("docHealth"); panel.open = true;
+    try { panel.scrollIntoView({ behavior: "smooth", block: "start" }); } catch (e) { panel.scrollIntoView(); }
+    try { await checkDocumentMaintenance(); status("已打开文档状态与恢复", "ok"); }
+    catch (e) { status("文档状态检查失败：" + (e.message || e), "bad"); }
+  };
   $("btnNewChart").onclick = () => endEdit(true);
   $("btnUpdate").onclick = act(pptUpdate);
   $("btnUpdateXl").onclick = act(xlUpdate);
@@ -2050,10 +2092,7 @@ function wire() {
       if (button.dataset.maint === "recover") message = await recoverMaintenancePending(button.dataset.id);
       if (button.dataset.maint === "relink") message = await relinkMaintenanceChart(button.dataset.id);
       if (button.dataset.maint === "fork") message = await forkMaintenanceShape(Number(button.dataset.index));
-      if (button.dataset.maint === "inspect") {
-        const record = documentStore().load(button.dataset.id);
-        message = record ? `孤立状态：${record.chartId}，修订 ${record.revision}；未作修改` : "该状态已不存在";
-      }
+      if (button.dataset.maint === "regenerate") message = loadMaintenanceOrphan(button.dataset.id);
       status(message || "恢复操作完成", "ok");
     } catch (e) { status("恢复操作失败：" + (e.message || e), "bad"); }
     finally { button.disabled = false; }

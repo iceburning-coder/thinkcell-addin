@@ -309,6 +309,28 @@
     return null;
   }
 
+  function powerPointSelectionIssue(candidates, resolved) {
+    if (resolved) return null;
+    for (const shape of Array.from(candidates || [])) {
+      if (!shape || shape.level !== 0) continue;
+      const tags = shape && shape.tags ? shape.tags : {};
+      const identity = powerPointIdentity(tags, shape && shape.name);
+      const pluginMarker = identity
+        || String((shape && shape.name) || "").startsWith("TC:")
+        || Object.prototype.hasOwnProperty.call(tags, "TCCHART")
+        || Object.prototype.hasOwnProperty.call(tags, "TC_CHART_ID")
+        || Object.prototype.hasOwnProperty.call(tags, "TC_ELEMENT_ID");
+      if (pluginMarker) {
+        return {
+          kind: "ungrouped",
+          shapeId: String((shape && shape.id) || ""),
+          chartId: identity ? identity.chartId : String(tags.TC_CHART_ID || ""),
+        };
+      }
+    }
+    return null;
+  }
+
   function encodeExcelIdentity(identity) {
     const valid = validIdentity(identity, "altText");
     if (!valid) throw errorWithCode("TC_IDENTITY_INVALID", "Excel 图表标识格式不正确。");
@@ -390,6 +412,7 @@
     resolveOwnedInsertedSlideId, chartSelectionMode, captureChartOutput, preparePptReplacement, insertPendingPptShape,
     commitPptReplacement, replacePowerPointChart, insertPowerPointSlide,
     resolvePalette, insertExcelImageWithFallback, commitExcelReplacement, replaceExcelChart,
-    powerPointIdentity, resolvePowerPointChartCandidate, encodeExcelIdentity, parseExcelIdentity, EXCEL_IDENTITY_PREFIX,
+    powerPointIdentity, resolvePowerPointChartCandidate, powerPointSelectionIssue,
+    encodeExcelIdentity, parseExcelIdentity, EXCEL_IDENTITY_PREFIX,
   });
 }));

@@ -141,6 +141,18 @@
     return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
   }
 
+  function prepareChartRecord(input, existing, hostName, stateOverride) {
+    const state = stateOverride || (root.TC && root.TC.State);
+    if (!state) throw new Error("TC.State is required before preparing a chart record");
+    const record = state.normalize(input, { mode: "write" });
+    record.chartId = record.chartId || (existing && existing.chartId) || state.createChartId();
+    record.revision = Math.max(record.revision || 0, (existing && existing.revision) || 0) + 1;
+    record.meta = Object.assign({}, (existing && existing.meta) || {}, record.meta || {});
+    if (hostName) record.meta.hostName = hostName;
+    if (existing && !existing.chartId && hostName) record.meta.legacyKey = hostName;
+    return record;
+  }
+
   function create(settings, options) {
     const opts = options || {};
     const state = opts.state || (root.TC && root.TC.State);
@@ -337,13 +349,14 @@
     }
 
     return Object.freeze({
-      load, save, beginPending, commitPending, clearPending, recoverPending, loadLegacy, migrateLegacy, classifyRecords,
+      load, save, refresh: refreshSettings, beginPending, commitPending, clearPending, recoverPending,
+      loadLegacy, migrateLegacy, classifyRecords,
       chartKey, indexKey: INDEX_KEY,
     });
   }
 
   return Object.freeze({
-    create, reconcileIdentities, maintenanceReport, editDisposition, diagnosticSummary,
+    create, prepareChartRecord, reconcileIdentities, maintenanceReport, editDisposition, diagnosticSummary,
     INDEX_KEY, LEGACY_INDEX_KEY, CHART_KEY_PREFIX,
   });
 }));

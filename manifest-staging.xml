@@ -19,7 +19,7 @@
     <Host Name="Workbook"/>
   </Hosts>
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag1"/>
+    <SourceLocation DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag3"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
@@ -100,7 +100,7 @@
         <bt:Image id="TcDiag.I80" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/assets/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="TcDiag.Url" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag1"/>
+        <bt:Url id="TcDiag.Url" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag3"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="TcDiag.Title" DefaultValue="think-cell 图表（诊断版）"/>
