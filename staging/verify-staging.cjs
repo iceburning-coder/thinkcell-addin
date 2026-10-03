@@ -3,55 +3,31 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
+const State = require("./tc-state.js");
 
 const root = path.resolve(__dirname, "..");
 const committed = process.argv.includes("--committed");
 const read = (relative) => fs.readFileSync(path.join(root, relative), "utf8");
 const exists = (relative) => fs.existsSync(path.join(root, relative));
 
-function svgWhitelist(constantName) {
-  const source = read("staging/tc-state.js");
-  const match = source.match(new RegExp(`const ${constantName} = new Set\\(\\[([\\s\\S]*?)\\]\\);`));
-  assert.ok(match, `${constantName} not found in staging/tc-state.js`);
-  const values = [...match[1].matchAll(/"([^"]+)"/g)].map((item) => item[1]);
-  assert.ok(values.length, `${constantName} is empty`);
-  return new Set(values);
-}
-
-const SVG_TAGS = svgWhitelist("SVG_TAGS");
-const SVG_ATTRS = svgWhitelist("SVG_ATTRS");
-
-function unsafeSvg(message, details) {
-  const error = new Error(message);
-  error.code = "TC_SVG_UNSAFE";
-  error.details = details;
-  throw error;
-}
-
 function inspectSvgWithPython(markup) {
   const program = [
-    "import json, sys, xml.etree.ElementTree as ET",
+    "import json, sys",
+    "from xml.dom import Node, minidom",
     "markup = sys.stdin.read()",
     "try:",
-    "    root = ET.fromstring(markup)",
-    "except ET.ParseError as error:",
+    "    document = minidom.parseString(markup)",
+    "except Exception as error:",
     "    sys.stdout.write(json.dumps({'parseError': str(error)}))",
     "    raise SystemExit(0)",
-    "def split_name(name):",
-    "    if name.startswith('{'):",
-    "        namespace, local = name[1:].split('}', 1)",
-    "        return local, namespace",
-    "    return name, None",
-    "nodes = []",
-    "for element in root.iter():",
-    "    local_name, namespace = split_name(element.tag)",
+    "def serialize(element):",
     "    attributes = []",
-    "    for name, value in element.attrib.items():",
-    "        attribute_name, attribute_namespace = split_name(name)",
-    "        attributes.append({'name': attribute_name, 'namespace': attribute_namespace, 'value': value})",
-    "    nodes.append({'name': local_name, 'namespace': namespace, 'attributes': attributes})",
-    "root_name, root_namespace = split_name(root.tag)",
-    "sys.stdout.write(json.dumps({'root': root_name, 'rootNamespace': root_namespace, 'nodes': nodes}))",
+    "    for index in range(element.attributes.length):",
+    "        attribute = element.attributes.item(index)",
+    "        attributes.append({'name': attribute.name, 'value': attribute.value})",
+    "    children = [serialize(child) for child in element.childNodes if child.nodeType == Node.ELEMENT_NODE]",
+    "    return {'localName': element.localName or element.tagName, 'attributes': attributes, 'children': children}",
+    "sys.stdout.write(json.dumps(serialize(document.documentElement)))",
   ].join("\n");
   const output = execFileSync("python3", ["-c", program], {
     cwd: os.tmpdir(),
@@ -62,28 +38,38 @@ function inspectSvgWithPython(markup) {
   return JSON.parse(output);
 }
 
-function verifySvg(markup) {
-  const inspected = inspectSvgWithPython(markup);
-  if (inspected.parseError) unsafeSvg("图表 SVG 语法不正确。", { message: inspected.parseError });
-  if (inspected.root !== "svg") unsafeSvg("图表输出不是 SVG。", { element: inspected.root });
-  if (inspected.rootNamespace && inspected.rootNamespace !== "http://www.w3.org/2000/svg") {
-    unsafeSvg("图表 SVG 命名空间不正确。", { namespace: inspected.rootNamespace });
-  }
-  for (const node of inspected.nodes) {
-    if (!SVG_TAGS.has(node.name)) unsafeSvg("图表 SVG 包含不允许的元素。", { element: node.name });
-    for (const attribute of node.attributes) {
-      if (/^on/i.test(attribute.name) || !SVG_ATTRS.has(attribute.name)) {
-        unsafeSvg("图表 SVG 包含不允许的属性。", { attribute: attribute.name });
-      }
-      if (/(?:javascript\s*:|data\s*:|https?\s*:|url\s*\()/i.test(attribute.value)) {
-        unsafeSvg("图表 SVG 包含外部或脚本地址。", { attribute: attribute.name });
-      }
-      if (/(?:onload|onerror)\s*=/i.test(attribute.value)) {
-        unsafeSvg("图表 SVG 包含事件处理代码。", { attribute: attribute.name });
-      }
+function domElement(node) {
+  return {
+    nodeType: 1,
+    localName: node.localName,
+    attributes: node.attributes || [],
+    children: (node.children || []).map(domElement),
+  };
+}
+
+function elementsNamed(rootElement, name) {
+  const matches = [];
+  const visit = (element) => {
+    if (element.localName === name) matches.push(element);
+    element.children.forEach(visit);
+  };
+  visit(rootElement);
+  return matches;
+}
+
+class PythonDomParser {
+  parseFromString(markup) {
+    const parsed = inspectSvgWithPython(markup);
+    if (parsed.parseError) {
+      const parsererror = domElement({ localName: "parsererror", attributes: [], children: [] });
+      return { documentElement: parsererror, getElementsByTagName: (name) => name === "parsererror" ? [parsererror] : [] };
     }
+    const documentElement = domElement(parsed);
+    return {
+      documentElement,
+      getElementsByTagName: (name) => elementsNamed(documentElement, name),
+    };
   }
-  return inspected;
 }
 
 function renderDefaultColumnWithActualEngine(engineArchive) {
@@ -141,16 +127,18 @@ required.forEach((relative) => assert.ok(exists(relative), `missing ${relative}`
 assert.equal(exists("staging/tc-elements.js"), false, "tc-elements.js must not be staged");
 
 const defaultSvg = renderDefaultColumnWithActualEngine(path.join(root, "staging", "py", "pylib.zip"));
-verifySvg(defaultSvg);
+State.sanitizeSvg(defaultSvg, { DOMParser: PythonDomParser });
 for (const [name, markup, rejectedAttribute] of [
   ["root style attribute", '<svg style="background:#fff"></svg>', "style"],
   ["malformed unclosed element", "<svg><text>broken</svg>", null],
   ["mixed quotes followed by an event attribute", '<svg><text font-family="\'A\', B" onclick="x">x</text></svg>', "onclick"],
+  ["prefixed namespace declaration", '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><rect x="1"/></svg>', "xmlns:xlink"],
+  ["nested default namespace override", '<svg xmlns="http://www.w3.org/2000/svg"><g xmlns="http://example.com/evil"><rect x="1"/></g></svg>', null],
 ]) {
   assert.throws(
-    () => verifySvg(markup),
+    () => State.sanitizeSvg(markup, { DOMParser: PythonDomParser }),
     (error) => error && error.code === "TC_SVG_UNSAFE"
-      && (rejectedAttribute ? error.details.attribute === rejectedAttribute : Boolean(error.details.message)),
+      && (rejectedAttribute ? error.details && error.details.attribute === rejectedAttribute : true),
     `SVG verification must reject ${name}`,
   );
 }
