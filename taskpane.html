@@ -131,11 +131,17 @@
     <div class="maintbar">
       <button id="btnDocCheck" class="ghost">检查文档</button>
       <button id="btnCopyDiag" class="ghost" disabled>复制诊断信息</button>
-      <label class="chk ppt-only"><input type="checkbox" id="selectionDiagToggle"> 选区诊断</label>
-      <button id="btnCopySelectionDiag" class="ghost ppt-only" disabled>复制选区诊断日志</button>
     </div>
     <p id="docHealthSummary" class="hint">检查未完成更新、重复图表、孤立状态和 Excel 断链；不会自动删除任何内容。</p>
     <div id="docIssues" class="issues"></div>
+    <details class="diag-advanced ppt-only">
+      <summary>高级：选区诊断</summary>
+      <div class="maintbar">
+        <label class="chk"><input type="checkbox" id="selectionDiagToggle"> 开启选区诊断</label>
+        <button id="btnCopySelectionDiag" class="ghost" disabled>复制选区诊断日志</button>
+      </div>
+      <p class="hint">仅排查 PowerPoint 图表识别问题时开启；日志只保存在当前任务窗格内存中。</p>
+    </details>
   </details>
 
   <details class="card adv">

@@ -5,7 +5,7 @@
            xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
            xsi:type="TaskPaneApp">
   <Id>5c1f7b8e-3a2d-4c6e-9b0f-7d2e4a1c8b93</Id>
-  <Version>1.0.5.0</Version>
+  <Version>1.0.6.0</Version>
   <ProviderName>Xiaowu</ProviderName>
   <DefaultLocale>zh-CN</DefaultLocale>
   <DisplayName DefaultValue="think-cell 风格图表"/>
@@ -19,7 +19,7 @@
     <Host Name="Workbook"/>
   </Hosts>
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/taskpane.html?v=5"/>
+    <SourceLocation DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/taskpane.html?v=6"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
@@ -100,7 +100,7 @@
         <bt:Image id="Tc.I80" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/assets/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="Tc.Url" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/taskpane.html?v=5"/>
+        <bt:Url id="Tc.Url" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/taskpane.html?v=6"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="Tc.Title" DefaultValue="think-cell 风格图表"/>
