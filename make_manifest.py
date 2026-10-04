@@ -2,7 +2,7 @@
 import sys, uuid, pathlib
 
 base = sys.argv[1].rstrip("/") if len(sys.argv) > 1 else "https://localhost:3000"
-VER = sys.argv[2] if len(sys.argv) > 2 else "3"   # 改这个数字可强制 Office 重新加载面板（绕过缓存）
+VER = sys.argv[2] if len(sys.argv) > 2 else "5"   # 改这个数字可强制 Office 重新加载面板（绕过缓存）
 ID = "5c1f7b8e-3a2d-4c6e-9b0f-7d2e4a1c8b93"   # 固定 ID，更新 manifest 时保持不变
 xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"

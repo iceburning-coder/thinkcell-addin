@@ -56,13 +56,14 @@ button:disabled { opacity: .5; cursor: default; }
 .loading.hide { display: none; }
 .spinner { width: 18px; height: 18px; border: 2px solid #E6C77A; border-top-color: #5C4400; border-radius: 50%; animation: spin 1s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
-body:not(.ppt) .ppt-only, body:not(.xl) .xl-only, body:not(.web) .web-only { display: none !important; }
+body:not(.ppt) .ppt-only, body:not(.xl) .xl-only, body:not(.web) .web-only, body.web .office-only { display: none !important; }
 
 .hide { display: none !important; }
 body.ppt .bar, body.xl .bar { display: none; }
 .banner { display: flex; justify-content: space-between; align-items: center; gap: 8px; background: #EAF2FB; color: #0B2D4F;
   border: 1px solid #B9D5EC; border-radius: 8px; padding: 8px 10px; font-size: 12.5px; position: sticky; top: 0; z-index: 4; }
 .banner.editing { background: #FFF1EC; border-color: #F3C3B3; color: #7A2A12; }
+.banner.warning { background: #FFF8E6; border-color: #E6C77A; color: #5C4400; }
 .gridbar { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
 .grid { overflow: auto; max-height: 260px; border: 1px solid var(--line); border-radius: 5px; background: var(--card); }
 .grid table { border-collapse: collapse; font: 12px ui-monospace, Menlo, Consolas, monospace; }
@@ -79,4 +80,10 @@ body.ppt .bar, body.xl .bar { display: none; }
 .colors button.rs { padding: 0 4px; font-size: 11px; border: 0; color: var(--muted); }
 .themeed { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
 .swatches { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.maintbar { display: flex; gap: 6px; margin: 8px 0 4px; }
+.issues { display: flex; flex-direction: column; gap: 5px; margin-top: 7px; }
+.issue { border-top: 1px dashed var(--line); padding-top: 6px; font-size: 12px; }
+.issue:first-child { border-top: 0; }
+.issue code { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.issue button { margin-top: 4px; }
 .grid3 { grid-template-columns: repeat(3, 1fr); }
