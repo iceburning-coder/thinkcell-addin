@@ -11,6 +11,10 @@
 
 `staging/verify-staging.cjs` is release tooling rather than a deployable diagnostic asset, so its committed delta is excluded from the baseline comparison. The release mode still requires `git status --porcelain -- staging manifest-staging.xml` to be empty; an uncommitted verifier edit or any untracked staging file fails the gate. This permits a reviewed verifier hardening commit to precede a formal release while keeping the diagnostic runtime byte-stable.
 
+The reviewed local history and the published history use different commit IDs: local baseline `b62246f` is not present on the remote branch. Before preparing the next release, refresh or check out remote `main` and use published `3b7e846` as the `--release` baseline. Published v6 runtime commit `08dc59f` is also valid when the documentation-only follow-up is intentionally excluded. Do not use `b62246f` as the baseline for another remote release.
+
+Before the next formal version is published, fix the manifest `SupportUrl`, which currently points to the non-existent `/thinkcell-addin/README.html`. Either point `SupportUrl` to `/thinkcell-addin/` or publish a real `README.html`, keep `manifest.xml` and `make_manifest.py` consistent, and verify the selected HTTPS URL returns 200 with cache disabled.
+
 ## Known limitation in Day 3-B
 
 PowerPoint copy handling is read-only during load and forks only at the first update. Excel has not yet adopted that timing: `xlPick` still calls `ensureUniqueIdentityForEdit` while a chart is being loaded (`taskpane.js:1698-1705`, through `repairReconciledShape` at `taskpane.js:1933-1938`). Selecting a copied Excel chart can therefore write its forked identity before the user saves an edit. Moving Excel identity repair to the update/save boundary is deferred; until then, do not describe Excel chart loading as read-only.
@@ -23,10 +27,10 @@ PowerPoint copy handling is read-only during load and forks only at the first up
    - Excel: `~/Library/Containers/com.microsoft.Excel/Data/Documents/wef/`
 3. Reopen each application and confirm the formal button opens the expected `taskpane.html?v=<release>`. Keep the diagnostic manifest separate; it has its own GUID and `TcDiag.*` command IDs.
 
-If Office reports that it cannot load the add-in, quit the affected application again. First locate cached manifests with the following read-only command, replacing `<Application>` with `Powerpoint` or `Excel`:
+If Office reports that it cannot load the add-in, quit the affected application again. Office's cached manifest files can have no filename extension (for example, `5c1f7b8e-…_1.0.4.0`), so do not restrict the search to `*.xml`. Locate cached manifests with the following read-only command, replacing `<Application>` with `Powerpoint` or `Excel`:
 
 ```bash
-grep -RIlE 'think-cell|https://localhost:' "$HOME/Library/Containers/com.microsoft.<Application>/Data/Library/Application Support/Microsoft/Office/16.0/Wef" --include='*.xml'
+grep -RIlE 'think-cell|https://localhost:' "$HOME/Library/Containers/com.microsoft.<Application>/Data/Library/Application Support/Microsoft/Office/16.0/Wef"
 ```
 
 Inspect the matched paths and move only the enclosing `{GUID}` directory whose `Manifests` subtree contains the think-cell or localhost manifest into a dated sibling directory such as `.../16.0/Wef_backup_YYYYMMDD/`. Leave unrelated `{GUID}` cache directories in place. Move `AggregatedCache` and `AppCommands` into the same backup. Move the affected application's Office web cache under its container `Data/Library/Caches/` into a separate dated backup when present; do not delete it. An obsolete development manifest that points to `https://localhost:*` may exist either in `Data/Documents/wef/` or in the matched cached `Manifests/` directory. Move it into the corresponding backup, preserving enough of its original path to restore it; never permanently delete it during diagnosis. Reopen Office and reload the formal manifest.
