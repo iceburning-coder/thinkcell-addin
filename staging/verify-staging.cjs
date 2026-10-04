@@ -6,7 +6,19 @@ const { execFileSync } = require("node:child_process");
 const State = require("./tc-state.js");
 
 const root = path.resolve(__dirname, "..");
-const committed = process.argv.includes("--committed");
+const args = process.argv.slice(2);
+const committed = args.includes("--committed");
+const releaseIndex = args.indexOf("--release");
+assert.ok(!(committed && releaseIndex >= 0), "--committed and --release are mutually exclusive");
+const releaseBaseline = releaseIndex >= 0 ? args[releaseIndex + 1] : null;
+if (releaseIndex >= 0) {
+  assert.ok(releaseBaseline && !releaseBaseline.startsWith("--"), "--release requires a baseline commit");
+  assert.deepEqual(args, ["--release", releaseBaseline], "--release accepts exactly one baseline commit");
+} else if (committed) {
+  assert.deepEqual(args, ["--committed"], "--committed does not accept additional arguments");
+} else {
+  assert.deepEqual(args, [], `unknown arguments: ${args.join(" ")}`);
+}
 const read = (relative) => fs.readFileSync(path.join(root, relative), "utf8");
 const exists = (relative) => fs.existsSync(path.join(root, relative));
 
@@ -182,6 +194,7 @@ assert.match(js, /fetch\("\.\/py\/pylib\.zip\?v=diag3"\)/);
 
 const formalManifest = read("manifest.xml");
 const stagingManifest = read("manifest-staging.xml");
+const manifestGenerator = read("make_manifest.py");
 const id = (xml) => {
   const match = xml.match(/<Id>([^<]+)<\/Id>/);
   assert.ok(match, "manifest Id missing");
@@ -198,30 +211,69 @@ assert.match(stagingManifest, /<Host Name="Workbook"\/>/);
 const stagingUrl = "https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag3";
 assert.ok(stagingManifest.split(stagingUrl).length >= 3, "both SourceLocation values must use staging URL");
 
+function verifyFormalManifestConsistency() {
+  const formalId = id(formalManifest);
+  const generatedId = manifestGenerator.match(/^ID = "([^"]+)"/m);
+  const generatedVersion = manifestGenerator.match(/^VER = .* else "([0-9]+)"/m);
+  const version = formalManifest.match(/<Version>1\.0\.([0-9]+)\.0<\/Version>/);
+  assert.equal(formalId, "5c1f7b8e-3a2d-4c6e-9b0f-7d2e4a1c8b93", "formal manifest GUID changed");
+  assert.ok(generatedId, "manifest generator ID missing");
+  assert.equal(generatedId[1], formalId, "manifest generator GUID must match manifest.xml");
+  assert.ok(version, "formal manifest version must follow 1.0.<release>.0");
+  assert.ok(generatedVersion, "manifest generator default release version missing");
+  assert.equal(generatedVersion[1], version[1], "manifest generator version must match manifest.xml");
+  const expectedUrl = `https://iceburning-coder.github.io/thinkcell-addin/taskpane.html?v=${version[1]}`;
+  const sourceUrls = [...formalManifest.matchAll(/DefaultValue="([^"]*\/taskpane\.html\?v=[^"]+)"/g)].map((match) => match[1]);
+  assert.equal(sourceUrls.length, 2, "formal manifest must contain two task-pane SourceLocation values");
+  sourceUrls.forEach((value) => assert.equal(value, expectedUrl, "formal manifest SourceLocation URL is inconsistent"));
+}
+
 const protectedPaths = [
   "taskpane.html", "taskpane.css", "taskpane.js", "manifest.xml",
   "pyodide", "py/pylib.zip", ":(glob)tc-*.js",
 ];
-const baseline = committed ? "HEAD~1" : "HEAD";
-const target = committed ? "HEAD" : undefined;
-const diffArgs = ["diff", "--exit-code", baseline];
-if (target) diffArgs.push(target);
-diffArgs.push("--", ...protectedPaths);
-execFileSync("git", diffArgs, {
-  cwd: root,
-  env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-  stdio: "pipe",
-});
+if (releaseBaseline) {
+  execFileSync("git", ["rev-parse", "--verify", `${releaseBaseline}^{commit}`], {
+    cwd: root,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    stdio: "pipe",
+  });
+  execFileSync("git", ["diff", "--exit-code", releaseBaseline, "--", "staging/", "manifest-staging.xml", ":(exclude)staging/verify-staging.cjs"], {
+    cwd: root,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    stdio: "pipe",
+  });
+  const stagingStatus = execFileSync("git", ["status", "--porcelain", "--", "staging", "manifest-staging.xml"], {
+    cwd: root,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    encoding: "utf8",
+  }).trim();
+  assert.equal(stagingStatus, "", `staging working tree must be clean:\n${stagingStatus}`);
+  assert.equal(exists("tc-elements.js"), false, "tc-elements.js must not be published at the formal root");
+  verifyFormalManifestConsistency();
+} else {
+  const baseline = committed ? "HEAD~1" : "HEAD";
+  const target = committed ? "HEAD" : undefined;
+  const diffArgs = ["diff", "--exit-code", baseline];
+  if (target) diffArgs.push(target);
+  diffArgs.push("--", ...protectedPaths);
+  execFileSync("git", diffArgs, {
+    cwd: root,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    stdio: "pipe",
+  });
 
-const changed = execFileSync("git", committed
-  ? ["diff", "--name-only", "HEAD~1..HEAD"]
-  : ["status", "--porcelain"], {
-  cwd: root,
-  env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
-  encoding: "utf8",
-}).split("\n").filter(Boolean).map((line) => committed ? line : line.slice(3));
-changed.forEach((relative) => {
-  assert.ok(relative === "manifest-staging.xml" || relative.startsWith("staging/"), `out-of-scope change ${relative}`);
-});
+  const changed = execFileSync("git", committed
+    ? ["diff", "--name-only", "HEAD~1..HEAD"]
+    : ["status", "--porcelain"], {
+    cwd: root,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    encoding: "utf8",
+  }).split("\n").filter(Boolean).map((line) => committed ? line : line.slice(3));
+  changed.forEach((relative) => {
+    assert.ok(relative === "manifest-staging.xml" || relative.startsWith("staging/"), `out-of-scope change ${relative}`);
+  });
+}
 
-console.log(`staging verification passed (${committed ? "committed" : "working tree"})`);
+const mode = releaseBaseline ? `release from ${releaseBaseline}` : (committed ? "committed" : "working tree");
+console.log(`staging verification passed (${mode})`);
