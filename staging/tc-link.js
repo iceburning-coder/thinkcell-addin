@@ -15,6 +15,13 @@
     throw error;
   }
 
+  function failWithLink(code, message, link) {
+    const error = new Error(message);
+    error.code = code;
+    error.link = link;
+    throw error;
+  }
+
   function clone(value) { return JSON.parse(JSON.stringify(value)); }
 
   function definedName(chartId) {
@@ -89,6 +96,34 @@
       delete result.error;
       return result;
     } catch (error) { return broken(link, error); }
+  }
+
+  async function ensureChartLink(record, operations) {
+    const input = record || {};
+    const targetName = definedName(input.chartId);
+    const link = input.link;
+    if (!link) return null;
+    const ops = operations || {};
+    if (typeof ops.resolve !== "function" || typeof ops.set !== "function") {
+      fail("TC_LINK_OPERATIONS", "Excel 链接缺少解析或保存操作。");
+    }
+    if (link.kind === "workbook-name") {
+      const resolved = await ops.resolve(link);
+      if (!resolved || resolved.status === "broken") {
+        failWithLink("TC_LINK_REF", "Excel 链接已失效；现有图表和最后一次数据已保留。", resolved);
+      }
+      if (!String(resolved.lastAddress || "").trim()) {
+        failWithLink("TC_LINK_INVALID_RANGE", "Excel 链接缺少单元格地址。", resolved);
+      }
+      if (resolved.name === targetName) return resolved;
+      return ops.set(input.chartId, resolved.lastAddress);
+    }
+    if (typeof link !== "string" && link.kind !== "legacy-address") {
+      fail("TC_LINK_KIND", "未知的 Excel 链接类型。");
+    }
+    const address = typeof link === "string" ? link : (link.address || link.lastAddress);
+    if (!String(address || "").trim()) fail("TC_LINK_INVALID_RANGE", "Excel 链接缺少单元格地址。");
+    return ops.set(input.chartId, address);
   }
 
   function canonical(value) {
@@ -206,13 +241,15 @@
     try { return await opts.replace(); }
     catch (error) {
       opts.echoes.clear(opts.chartId);
-      opts.refreshes.schedule(opts.chartId, opts.payload);
+      if (!opts.shouldScheduleRefresh || opts.shouldScheduleRefresh(error)) {
+        opts.refreshes.schedule(opts.chartId, opts.payload);
+      }
       throw error;
     }
   }
 
   return Object.freeze({
-    definedName, splitAddress, qualifyAddress, createRecord, resolve,
+    definedName, splitAddress, qualifyAddress, createRecord, resolve, ensureChartLink,
     stableValueHash, createEchoTracker, createRefreshQueue, withWritebackRecovery,
   });
 }));

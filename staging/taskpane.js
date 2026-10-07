@@ -824,7 +824,7 @@ async function initPy() {
     $("loadmsg").textContent = "正在加载 Python 运行环境…";
     PY = await loadPyodide({ indexURL: new URL("../pyodide/", location.href).href });
     $("loadmsg").textContent = "正在加载图表引擎…";
-    const buf = await (await fetch("./py/pylib.zip?v=diag3")).arrayBuffer();
+    const buf = await (await fetch("./py/pylib.zip?v=diag4")).arrayBuffer();
     PY.unpackArchive(buf, "zip", { extractDir: "/lib/tc" });
     PY.runPython("import sys; sys.path.insert(0, '/lib/tc'); import addin_api");
     API = PY.pyimport("addin_api");
@@ -912,13 +912,21 @@ function prepareChartRecord(state, existing, hostName) {
   return TC.Store.prepareChartRecord(state, existing, hostName, TC.State);
 }
 function operationToken() { return `op-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
-async function runChartOperation(record, kind, operation) {
+async function runChartOperation(record, kind, operation, options) {
   const store = documentStore(); if (!store) throw new Error("当前文档不支持保存图表状态");
   const token = operationToken();
   await store.beginPending({ chartId: record.chartId, revision: record.revision, kind, token });
   try {
     const result = await operation(token);
-    await store.clearPending(record.chartId);
+    if (options && options.preserveCommittedResultOnCleanupFailure) {
+      return TC.Office.finishPendingCleanup(result, () => store.clearPending(record.chartId));
+    }
+    try { await store.clearPending(record.chartId); }
+    catch (error) {
+      error.persisted = true;
+      error.retainPending = true;
+      throw error;
+    }
     return result;
   } catch (error) {
     if (!error.persisted && !error.retainPending) {
@@ -1290,6 +1298,7 @@ async function loadSelectedChart() {
     : "已载入所选图表的数据和设置", "ok");
 }
 function endEdit(restore) {
+  XL_WRITEBACK_CONFIRM.cancel();
   EDIT = null;
   if (restore) loadState();
   showBanner(); render();
@@ -1453,10 +1462,14 @@ async function xlReplaceShape(name, out, sheet, state, chartId, linkRecord) {
   if (!existing) throw new Error("找不到该图表的文档状态");
   const record = prepareChartRecord(state, existing, name);
   if (linkRecord !== undefined) record.link = linkRecord;
+  return xlReplacePreparedShape(name, out, sheet, record);
+}
+async function xlReplacePreparedShape(name, out, sheet, record, options) {
+  requireCapability("excelShapes", "当前 Excel 版本不支持更新图片图表（需要 ExcelApi 1.9）");
   const finalName = newChartName(record.chartId); record.meta.hostName = finalName;
   const result = await runChartOperation(record, "xl-update", (token) => xlRunReplacement(
     xlReplacementAdapter(() => xlExistingSnapshot(name, sheet), finalName, out, record, token),
-  ));
+  ), options);
   return { result, record, name: finalName };
 }
 // ---- 单元格 ↔ 图表 链接
@@ -1500,7 +1513,7 @@ async function xlResolveLink(link) {
     return { formula: item.formula, address: range.address, worksheetId: range.worksheet.id, sheet: range.worksheet.name };
   }));
 }
-async function xlSetNamedLink(chartId, address) {
+async function xlSetNamedLink(chartId, address, lifecycle) {
   const name = TC.Link.definedName(chartId);
   return xlRun(async (ctx) => {
     const parsed = splitAddr(address);
@@ -1509,27 +1522,27 @@ async function xlSetNamedLink(chartId, address) {
     const range = sheet.getRange(parsed.range); range.load("address");
     const existing = ctx.workbook.names.getItemOrNullObject(name); existing.load("name");
     await ctx.sync();
-    if (existing.isNullObject) ctx.workbook.names.add(name, range, "think-cell 风格图表数据链接");
+    if (existing.isNullObject) {
+      ctx.workbook.names.add(name, range, "think-cell 风格图表数据链接");
+      if (lifecycle) lifecycle.createdName = name;
+    }
     else existing.formula = "=" + range.address;
     await ctx.sync();
     return TC.Link.createRecord(chartId, { worksheetId: sheet.id, sheet: sheet.name, address: range.address });
   });
 }
-async function xlEnsureNamedLink(record) {
-  if (!record.link) return null;
-  if (record.link.kind === "workbook-name") {
-    const resolved = await xlResolveLink(record.link);
-    if (resolved.status === "broken") {
-      const error = new Error("Excel 链接已失效；现有图表和最后一次数据已保留");
-      error.code = resolved.error && resolved.error.code;
-      error.link = resolved;
-      throw error;
-    }
-    return resolved;
-  }
-  const address = typeof record.link === "string" ? record.link : (record.link.address || record.link.lastAddress);
-  if (!address) throw new Error("Excel 链接缺少单元格地址");
-  return xlSetNamedLink(record.chartId, address);
+async function xlEnsureNamedLink(record, lifecycle) {
+  return TC.Link.ensureChartLink(record, {
+    resolve: xlResolveLink,
+    set: (chartId, address) => xlSetNamedLink(chartId, address, lifecycle),
+  });
+}
+async function xlDeleteNamedLink(name) {
+  return xlRun(async (ctx) => {
+    const item = ctx.workbook.names.getItemOrNullObject(name); item.load("name");
+    await ctx.sync();
+    if (!item.isNullObject) { item.delete(); await ctx.sync(); }
+  });
 }
 function gridValues(grid, plain) {
   const vals = grid.map((r, i) => r.map((c, j) => {
@@ -1546,6 +1559,11 @@ const LINK_REFRESHES = TC.Link.createRefreshQueue({
   delay: 600,
   run: (chartId, payload) => refreshLinked(payload.name, chartId),
   onError: (error) => status("链接图表更新失败：" + (error.message || error), "bad"),
+});
+const XL_WRITEBACK_CONFIRM = TC.ExcelEdit.createPanelConfirmation({
+  container: $("writebackConfirm"), message: $("writebackConfirmMsg"),
+  accept: $("btnWritebackContinue"), cancel: $("btnWritebackCancel"),
+  onRequest: (message) => status(message, "bad"),
 });
 // 把面板数据写到 Excel（from = 链接地址，或省略 = 当前选中单元格左上角），返回带表名的新地址
 async function xlWriteGrid(grid, from, echo) {
@@ -1697,47 +1715,77 @@ async function xlRefreshList(selectName) {
   } catch (e) { /* 忽略 */ }
 }
 async function xlPick(name, chartId, hostRef) {
+  XL_WRITEBACK_CONFIRM.cancel();
   if (!name) { if (EDIT) endEdit(true); return; }
-  const forked = await ensureUniqueIdentityForEdit(hostRef);
-  if (forked) { name = forked.name; chartId = forked.record.chartId; await xlRefreshList(name); }
+  const identityEdit = await inspectHostIdentityForEdit(hostRef);
   const record = getChartRecord(name, chartId);
   const st = flattenChartRecord(record); if (!st) return;
-  EDIT = { name, chartId: record.chartId, revision: record.revision, title: st.title };
+  EDIT = { name, chartId: record.chartId, revision: record.revision, title: st.title, identityEdit };
   applyState(st); render(); showBanner();
+  status(identityEdit.action === "fork-on-save"
+    ? "这是复制出来的图；载入过程未修改文档，第一次更新时会自动拆分为独立图表"
+    : "已载入所选图表的数据和设置", "ok");
 }
 async function xlUpdate() {
   if (!EDIT) throw new Error("没有正在编辑的图表");
-  const previousRecord = getChartRecord(EDIT.name, EDIT.chartId);
+  const editName = EDIT.name;
+  const previousRecord = getChartRecord(editName, EDIT.chartId);
   if (!previousRecord) throw new Error("找不到该图表的文档状态");
   const prev = flattenChartRecord(previousRecord) || {};
   const st = panelState(); st.sheet = prev.sheet;
-  let link = previousRecord.link;
   let note = "";
-  let dataChanged = false;
-  if (link) {
-    const resolved = await xlResolveLink(link);
-    if (resolved.status === "broken") throw new Error("Excel 链接已失效；请重新选择数据区域后再更新");
-    link = resolved; st.link = link;
-    dataChanged = parseGrid(st.data).join("\n") !== parseGrid(prev.data || "").join("\n");
-  } else if (SEL_ADDRESS) { st.link = SEL_ADDRESS; link = undefined; }
-  const replace = () => xlReplaceShape(EDIT.name, LAST, st.sheet, st, EDIT.chartId, link);
-  const replacement = dataChanged
-    ? await TC.Link.withWritebackRecovery({
-      chartId: previousRecord.chartId,
-      payload: { name: EDIT.name, revision: previousRecord.revision },
-      echoes: LINK_ECHOES,
-      refreshes: LINK_REFRESHES,
-      replace: async () => {
-        const address = await xlWriteGrid(parseGrid(st.data), link.lastAddress, { chartId: previousRecord.chartId });
-        link = await xlSetNamedLink(previousRecord.chartId, address);
-        st.link = link;
-        note = `，数据已写回 ${link.lastAddress}`;
-        return replace();
-      },
-    })
-    : await replace();
+  const outcome = await TC.ExcelEdit.executeUpdate({
+    session: EDIT.identityEdit || { action: "keep" },
+    previousRecord,
+    panelState: st,
+    link: previousRecord.link || SEL_ADDRESS || null,
+    parseGrid,
+    confirmFork: confirmHostIdentityForkForSave,
+    prepareRecord: ({ fork, panel }) => prepareChartRecord(panel, fork ? null : previousRecord, fork ? null : editName),
+    prepareForkedRecord: TC.IdentityRepair.prepareForkedRecord,
+    resolveLink: xlResolveLink,
+    confirmSharedWriteback: ({ link }) => XL_WRITEBACK_CONFIRM.request(
+      `这是复制出来的图表，仍与原图共享 ${link.lastAddress}。继续会把面板数据写回该区域，并同步影响原图。`,
+    ),
+    ensureLink: async (record) => {
+      const lifecycle = { createdName: null };
+      try {
+        return { link: await xlEnsureNamedLink(record, lifecycle), createdName: lifecycle.createdName };
+      } catch (error) {
+        if (lifecycle.createdName) {
+          try { await xlDeleteNamedLink(lifecycle.createdName); }
+          catch (cleanupError) { error.linkRollbackError = cleanupError; }
+        }
+        throw error;
+      }
+    },
+    rollbackLink: xlDeleteNamedLink,
+    writeGrid: xlWriteGrid,
+    setLink: xlSetNamedLink,
+    replace: (record) => xlReplacePreparedShape(editName, LAST, st.sheet, record, {
+      preserveCommittedResultOnCleanupFailure: true,
+    }),
+    echoes: LINK_ECHOES,
+    refreshes: LINK_REFRESHES,
+    payload: { name: editName },
+  });
+  if (outcome.cancelled) return "已取消更新，文档未发生变化";
+  if (outcome.writtenAddress) note = `，数据已写回 ${outcome.writtenAddress}`;
+  const replacement = outcome.result;
   EDIT.name = replacement.name; EDIT.chartId = replacement.record.chartId; EDIT.revision = replacement.record.revision;
-  EDIT.title = $("title").value; showBanner(); xlRefreshList(EDIT.name);
+  EDIT.title = $("title").value; EDIT.identityEdit = { action: "keep" };
+  let shared = 0;
+  try {
+    const records = documentStore().classifyRecords().records.map((entry) => entry.record).filter(Boolean);
+    shared = TC.ExcelEdit.countOtherChartsSharingAddress(
+      records, replacement.record.chartId, replacement.record.link && replacement.record.link.lastAddress,
+    );
+  } catch (error) { console.warn("Unable to count shared Excel links", error); }
+  if (shared) note += `；此数据区域也被另外 ${shared} 个图表使用`;
+  if (replacement.result && replacement.result.pendingCleanupWarning) {
+    note += "；已更新，但清理未完成，请用「检查文档」恢复";
+  }
+  showBanner(); xlRefreshList(EDIT.name);
   return "已在原位置更新" + note;
 }
 const XL_TYPE = { stacked: "ColumnStacked", clustered: "ColumnClustered", "100": "ColumnStacked100" };

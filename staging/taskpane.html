@@ -6,7 +6,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=Edge">
 <title>think-cell 风格图表（诊断版）</title>
 <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-<link rel="stylesheet" href="taskpane.css?v=diag3">
+<link rel="stylesheet" href="taskpane.css?v=diag4">
 </head>
 <body>
 <header class="bar">
@@ -24,6 +24,11 @@
   <div id="editBanner" class="banner hide">
     <span id="editMsg">已选中一张 think-cell 图表</span>
     <span class="btns"><button id="btnLoadSel" class="ghost">载入编辑</button><button id="btnRecoverSel" class="ghost hide">文档状态与恢复</button><button id="btnNewChart" class="ghost hide">改为新建</button></span>
+  </div>
+
+  <div id="writebackConfirm" class="banner warning writeback-confirm hide" role="alertdialog" aria-live="assertive">
+    <span id="writebackConfirmMsg">这张副本会把数据写回与原图共享的 Excel 区域。</span>
+    <span class="btns"><button id="btnWritebackContinue" class="primary">继续写回</button><button id="btnWritebackCancel" class="ghost">取消</button></span>
   </div>
 
   <section class="card">
@@ -132,11 +137,17 @@
     <div class="maintbar">
       <button id="btnDocCheck" class="ghost">检查文档</button>
       <button id="btnCopyDiag" class="ghost" disabled>复制诊断信息</button>
-      <label class="chk ppt-only"><input type="checkbox" id="selectionDiagToggle"> 选区诊断</label>
-      <button id="btnCopySelectionDiag" class="ghost ppt-only" disabled>复制选区诊断日志</button>
     </div>
     <p id="docHealthSummary" class="hint">检查未完成更新、重复图表、孤立状态和 Excel 断链；不会自动删除任何内容。</p>
     <div id="docIssues" class="issues"></div>
+    <details class="diag-advanced ppt-only">
+      <summary>高级：选区诊断</summary>
+      <div class="maintbar">
+        <label class="chk"><input type="checkbox" id="selectionDiagToggle"> 开启选区诊断</label>
+        <button id="btnCopySelectionDiag" class="ghost" disabled>复制选区诊断日志</button>
+      </div>
+      <p class="hint">仅排查 PowerPoint 图表识别问题时开启；日志只保存在当前任务窗格内存中。</p>
+    </details>
   </details>
 
   <details class="card adv">
@@ -147,12 +158,13 @@
   </details>
 </main>
 <script src="../pyodide/pyodide.js"></script>
-<script src="tc-state.js?v=diag3"></script>
-<script src="tc-selection-diagnostics.js?v=diag3"></script>
-<script src="tc-office.js?v=diag3"></script>
-<script src="tc-store.js?v=diag3"></script>
-<script src="tc-identity-repair.js?v=diag3"></script>
-<script src="tc-link.js?v=diag3"></script>
-<script src="taskpane.js?v=diag3"></script>
+<script src="tc-state.js?v=diag4"></script>
+<script src="tc-selection-diagnostics.js?v=diag4"></script>
+<script src="tc-office.js?v=diag4"></script>
+<script src="tc-store.js?v=diag4"></script>
+<script src="tc-identity-repair.js?v=diag4"></script>
+<script src="tc-link.js?v=diag4"></script>
+<script src="tc-excel-edit.js?v=diag4"></script>
+<script src="taskpane.js?v=diag4"></script>
 </body>
 </html>

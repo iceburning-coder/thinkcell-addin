@@ -131,6 +131,19 @@
     return result;
   }
 
+  async function finishPendingCleanup(result, cleanup) {
+    try { await cleanup(); }
+    catch (error) {
+      if (result && typeof result === "object") {
+        result.pendingCleanupWarning = {
+          code: String((error && error.code) || "TC_PENDING_CLEANUP_FAILED"),
+          message: String((error && error.message) || "未完成操作标记清理失败。"),
+        };
+      }
+    }
+    return result;
+  }
+
   function resolveInsertedShapeId(beforeIds, allIds, selectedIds) {
     const before = beforeIds instanceof Set ? beforeIds : new Set(beforeIds || []);
     const all = Array.from(allIds || []);
@@ -407,7 +420,7 @@
 
   return Object.freeze({
     getCapabilities, capabilityGate, createBusyTracker, createFreshnessTracker,
-    fromAsyncResult, saveSettings, runPowerPoint, runExcel,
+    fromAsyncResult, saveSettings, runPowerPoint, runExcel, finishPendingCleanup,
     resolveInsertedShapeId, selectedShapeIdsOnSlide, excelHostRef, powerPointSlideInsertionMode,
     resolveOwnedInsertedSlideId, chartSelectionMode, captureChartOutput, preparePptReplacement, insertPendingPptShape,
     commitPptReplacement, replacePowerPointChart, insertPowerPointSlide,
