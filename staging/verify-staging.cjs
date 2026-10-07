@@ -128,6 +128,7 @@ const required = [
   "staging/tc-store.js",
   "staging/tc-identity-repair.js",
   "staging/tc-link.js",
+  "staging/tc-excel-edit.js",
   "staging/py/pylib.zip",
   "staging/assets/icon-16.png",
   "staging/assets/icon-32.png",
@@ -160,10 +161,12 @@ const html = read("staging/taskpane.html");
 const css = read("staging/taskpane.css");
 assert.match(html, /<title>[^<]*诊断版[^<]*<\/title>/);
 assert.match(html, /class="brand"[^>]*>[^<]*<span[^>]*><\/span>think-cell 风格图表[^<]*<span class="diag-badge">诊断版<\/span>/);
-assert.match(html, /href="taskpane\.css\?v=diag3"/);
-assert.match(html, /src="tc-identity-repair\.js\?v=diag3"/);
-assert.match(html, /src="taskpane\.js\?v=diag3"/);
-assert.doesNotMatch(html, /\?v=(?!diag3)[^"']+/, "every staging cache key must be diag3");
+assert.match(html, /href="taskpane\.css\?v=diag4"/);
+assert.match(html, /id="writebackConfirm"/);
+assert.match(html, /src="tc-identity-repair\.js\?v=diag4"/);
+assert.match(html, /src="tc-excel-edit\.js\?v=diag4"/);
+assert.match(html, /src="taskpane\.js\?v=diag4"/);
+assert.doesNotMatch(html, /\?v=(?!diag4)[^"']+/, "every staging cache key must be diag4");
 const diagnosticStripIndex = html.indexOf('class="diag-strip"');
 const editBannerIndex = html.indexOf('id="editBanner"');
 assert.ok(diagnosticStripIndex >= 0, "diagnostic strip missing");
@@ -190,7 +193,7 @@ const js = read("staging/taskpane.js");
 assert.match(js, /const DIAG_STORE_KEY = "diag-staging";/);
 assert.match(js, /store\.get\(DIAG_STORE_KEY, 1\)/);
 assert.match(js, /new URL\("\.\.\/pyodide\/", location\.href\)/);
-assert.match(js, /fetch\("\.\/py\/pylib\.zip\?v=diag3"\)/);
+assert.match(js, /fetch\("\.\/py\/pylib\.zip\?v=diag4"\)/);
 
 const formalManifest = read("manifest.xml");
 const stagingManifest = read("manifest-staging.xml");
@@ -203,12 +206,13 @@ const id = (xml) => {
 assert.notEqual(id(stagingManifest), id(formalManifest));
 assert.notEqual(id(stagingManifest), "5c1f7b8e-3a2d-4c6e-9b0f-7d2e4a1c8b93");
 assert.match(stagingManifest, /<DisplayName DefaultValue="think-cell 图表（诊断版）"\/>/);
+assert.match(stagingManifest, /<Version>1\.0\.5\.0<\/Version>/);
 assert.match(stagingManifest, /<bt:String id="TcDiag\.Btn" DefaultValue="think-cell 图表（诊断版）"\/>/);
 assert.doesNotMatch(stagingManifest, /(?:id|resid)="Tc\./, "diagnostic manifest must not reuse formal Tc.* resource IDs");
 assert.match(stagingManifest, /<TaskpaneId>TcDiagPane<\/TaskpaneId>/);
 assert.match(stagingManifest, /<Host Name="Presentation"\/>/);
 assert.match(stagingManifest, /<Host Name="Workbook"\/>/);
-const stagingUrl = "https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag3";
+const stagingUrl = "https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag4";
 assert.ok(stagingManifest.split(stagingUrl).length >= 3, "both SourceLocation values must use staging URL");
 
 function verifyFormalManifestConsistency() {

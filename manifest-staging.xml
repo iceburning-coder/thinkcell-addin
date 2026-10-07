@@ -5,21 +5,21 @@
            xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
            xsi:type="TaskPaneApp">
   <Id>d005df35-cb55-4b33-89bd-b27f6546916b</Id>
-  <Version>1.0.4.0</Version>
+  <Version>1.0.5.0</Version>
   <ProviderName>Xiaowu</ProviderName>
   <DefaultLocale>zh-CN</DefaultLocale>
   <DisplayName DefaultValue="think-cell 图表（诊断版）"/>
   <Description DefaultValue="咨询风格图表：瀑布、Mekko、CAGR/差异箭头等，一键插入 PPT 和 Excel"/>
   <IconUrl DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/assets/icon-64.png"/>
-  <SupportUrl DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/README.html"/>
+  <SupportUrl DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/"/>
   <AppDomains><AppDomain>https://iceburning-coder.github.io/thinkcell-addin</AppDomain></AppDomains>
   <Hosts>
     <Host Name="Presentation"/>
     <Host Name="Workbook"/>
   </Hosts>
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag3"/>
+    <SourceLocation DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag4"/>
   </DefaultSettings>
   <Permissions>ReadWriteDocument</Permissions>
   <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
@@ -100,7 +100,7 @@
         <bt:Image id="TcDiag.I80" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/assets/icon-80.png"/>
       </bt:Images>
       <bt:Urls>
-        <bt:Url id="TcDiag.Url" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag3"/>
+        <bt:Url id="TcDiag.Url" DefaultValue="https://iceburning-coder.github.io/thinkcell-addin/staging/taskpane.html?v=diag4"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="TcDiag.Title" DefaultValue="think-cell 图表（诊断版）"/>
