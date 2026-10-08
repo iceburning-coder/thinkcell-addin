@@ -6,7 +6,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=Edge">
 <title>think-cell 风格图表</title>
 <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-<link rel="stylesheet" href="taskpane.css?v=9">
+<link rel="stylesheet" href="taskpane.css?v=10">
 </head>
 <body>
 <header class="bar">
@@ -23,6 +23,11 @@
   <div id="editBanner" class="banner hide">
     <span id="editMsg">已选中一张 think-cell 图表</span>
     <span class="btns"><button id="btnLoadSel" class="ghost">载入编辑</button><button id="btnRecoverSel" class="ghost hide">文档状态与恢复</button><button id="btnNewChart" class="ghost hide">改为新建</button></span>
+  </div>
+
+  <div id="writebackConfirm" class="banner warning writeback-confirm hide" role="alertdialog" aria-live="assertive">
+    <span id="writebackConfirmMsg">这张副本会把数据写回与原图共享的 Excel 区域。</span>
+    <span class="btns"><button id="btnWritebackContinue" class="primary">继续写回</button><button id="btnWritebackCancel" class="ghost">取消</button></span>
   </div>
 
   <section class="card">
@@ -154,10 +159,11 @@
 <script src="pyodide/pyodide.js"></script>
 <script src="tc-state.js?v=9"></script>
 <script src="tc-selection-diagnostics.js?v=1"></script>
-<script src="tc-office.js?v=11"></script>
+<script src="tc-office.js?v=12"></script>
 <script src="tc-store.js?v=10"></script>
-<script src="tc-identity-repair.js?v=2"></script>
-<script src="tc-link.js?v=9"></script>
-<script src="taskpane.js?v=13"></script>
+<script src="tc-identity-repair.js?v=3"></script>
+<script src="tc-link.js?v=10"></script>
+<script src="tc-excel-edit.js?v=1"></script>
+<script src="taskpane.js?v=14"></script>
 </body>
 </html>

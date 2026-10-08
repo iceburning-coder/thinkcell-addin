@@ -230,6 +230,13 @@ function verifyFormalManifestConsistency() {
   const sourceUrls = [...formalManifest.matchAll(/DefaultValue="([^"]*\/taskpane\.html\?v=[^"]+)"/g)].map((match) => match[1]);
   assert.equal(sourceUrls.length, 2, "formal manifest must contain two task-pane SourceLocation values");
   sourceUrls.forEach((value) => assert.equal(value, expectedUrl, "formal manifest SourceLocation URL is inconsistent"));
+  const supportUrl = formalManifest.match(/<SupportUrl DefaultValue="([^"]+)"\/>/);
+  assert.ok(supportUrl, "formal manifest SupportUrl missing");
+  assert.equal(
+    supportUrl[1],
+    "https://github.com/iceburning-coder/thinkcell-addin",
+    "formal manifest SupportUrl must use the reachable repository support page",
+  );
 }
 
 const protectedPaths = [

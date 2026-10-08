@@ -11,18 +11,20 @@
 
 `staging/verify-staging.cjs` is release tooling rather than a deployable diagnostic asset, so its committed delta is excluded from the baseline comparison. The release mode still requires `git status --porcelain -- staging manifest-staging.xml` to be empty; an uncommitted verifier edit or any untracked staging file fails the gate. This permits a reviewed verifier hardening commit to precede a formal release while keeping the diagnostic runtime byte-stable.
 
-The reviewed local history and the published history use different commit IDs: local baseline `b62246f` is not present on the remote branch. Before preparing the next release, refresh or check out remote `main` and use published `3b7e846` as the `--release` baseline. Published v6 runtime commit `08dc59f` is also valid when the documentation-only follow-up is intentionally excluded. Do not use `b62246f` as the baseline for another remote release.
+The reviewed local history and the published history use different commit IDs: local baseline `b62246f` is not present on the remote branch. Before preparing the next release, refresh or check out remote `main` and use published `3f9a6f8` as the v7 `--release` baseline. Published v6 runtime commit `08dc59f` is also valid only when all later documentation-only follow-ups are intentionally excluded. Do not use `b62246f` as the baseline for another remote release.
 
-Before the next formal version is published, fix the manifest `SupportUrl`, which currently points to the non-existent `/thinkcell-addin/README.html`. Either point `SupportUrl` to `/thinkcell-addin/` or publish a real `README.html`, keep `manifest.xml` and `make_manifest.py` consistent, and verify the selected HTTPS URL returns 200 with cache disabled.
+The formal manifest `SupportUrl` points to the public GitHub repository page because the GitHub Pages project root has no index and returns 404. Keep `manifest.xml` and `make_manifest.py` consistent, and verify that `https://github.com/iceburning-coder/thinkcell-addin` returns 200 with cache disabled after every formal release.
 
-## Known limitation in Day 3-B
+## Excel fork-on-save behavior in v7
 
-PowerPoint copy handling is read-only during load and forks only at the first update. Excel has not yet adopted that timing: `xlPick` still calls `ensureUniqueIdentityForEdit` while a chart is being loaded (`taskpane.js:1698-1705`, through `repairReconciledShape` at `taskpane.js:1933-1938`). Selecting a copied Excel chart can therefore write its forked identity before the user saves an edit. Moving Excel identity repair to the update/save boundary is deferred; until then, do not describe Excel chart loading as read-only.
+Excel copy handling is read-only during load and forks only at the first update. A title-only update gives the copy an independent chart identity and defined name without writing cell data. If the copied chart's data changed, the first update asks for in-pane confirmation before writing back to the shared range; cancelling has no document side effects. An unlinked chart that adopts a range through `读取选区` uses that range as a link source and does not overwrite its cells during the update.
+
+After the first successful fork, the original and copy have separate chart identities and defined names, but both names still point to the same worksheet range. Later writeback from either chart therefore changes the data observed by the other chart without another blocking confirmation. The task pane reports how many other stored charts use the exact same normalized `lastAddress`; overlapping but non-identical ranges are not detected in v7.
 
 ## Mac local manifest upgrade
 
 1. Quit PowerPoint and Excel completely.
-2. In each application's `wef` directory, first move the existing `thinkcell-charts.manifest.xml` into a dated backup directory beside `wef`. Then copy the v5/v6 `manifest.xml` into `wef` with the exact target name `thinkcell-charts.manifest.xml`. Replace that one formal manifest; never add a second file carrying the same GUID `5c1f7b8e-3a2d-4c6e-9b0f-7d2e4a1c8b93`:
+2. In each application's `wef` directory, first move the existing `thinkcell-charts.manifest.xml` into a dated backup directory beside `wef`. Then copy the target release's `manifest.xml` into `wef` with the exact target name `thinkcell-charts.manifest.xml`. Replace that one formal manifest; never add a second file carrying the same GUID `5c1f7b8e-3a2d-4c6e-9b0f-7d2e4a1c8b93`:
    - PowerPoint: `~/Library/Containers/com.microsoft.Powerpoint/Data/Documents/wef/`
    - Excel: `~/Library/Containers/com.microsoft.Excel/Data/Documents/wef/`
 3. Reopen each application and confirm the formal button opens the expected `taskpane.html?v=<release>`. Keep the diagnostic manifest separate; it has its own GUID and `TcDiag.*` command IDs.

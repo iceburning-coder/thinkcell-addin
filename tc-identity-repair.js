@@ -88,6 +88,12 @@
     return record;
   }
 
+  function requiresSharedLinkWritebackConfirmation(options) {
+    const input = options || {};
+    return !!(input.session && input.session.action === "fork-on-save"
+      && input.link && input.link.status !== "broken" && input.dataChanged === true);
+  }
+
   async function ensureUniqueIdentityForEdit(options) {
     const input = options || {};
     const disposition = dispositionFor(input.report, input.hostRef);
@@ -115,5 +121,8 @@
     return { record, name, shape };
   }
 
-  return Object.freeze({ inspectIdentityForEdit, confirmForkForSave, prepareForkedRecord, ensureUniqueIdentityForEdit });
+  return Object.freeze({
+    inspectIdentityForEdit, confirmForkForSave, prepareForkedRecord,
+    requiresSharedLinkWritebackConfirmation, ensureUniqueIdentityForEdit,
+  });
 }));
