@@ -1744,7 +1744,7 @@ async function xlUpdate() {
     prepareForkedRecord: TC.IdentityRepair.prepareForkedRecord,
     resolveLink: xlResolveLink,
     confirmSharedWriteback: ({ link }) => XL_WRITEBACK_CONFIRM.request(
-      `这是复制出来的图表，仍与原图共享 ${link.lastAddress}。继续会把面板数据写回该区域，并同步影响原图。`,
+      TC.ExcelEdit.sharedWritebackConfirmMessage(link),
     ),
     ensureLink: async (record) => {
       const lifecycle = { createdName: null };
