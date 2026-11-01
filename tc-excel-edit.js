@@ -88,6 +88,31 @@
     });
   }
 
+  const SHARED_WRITEBACK_ADDRESS_FALLBACK = "未知单元格区域";
+
+  // String and legacy-address links are not defined names, so resolve leaves them
+  // without lastAddress. Read the same fields ensureChartLink writes from.
+  function addressText(value) {
+    return value == null ? "" : String(value).trim();
+  }
+
+  function sharedWritebackAddress(link) {
+    if (typeof link === "string") return addressText(link) || SHARED_WRITEBACK_ADDRESS_FALLBACK;
+    if (!link || typeof link !== "object") return SHARED_WRITEBACK_ADDRESS_FALLBACK;
+    const ordered = link.kind === "workbook-name"
+      ? [link.lastAddress, link.address]
+      : [link.address, link.lastAddress];
+    for (const value of ordered) {
+      const address = addressText(value);
+      if (address) return address;
+    }
+    return SHARED_WRITEBACK_ADDRESS_FALLBACK;
+  }
+
+  function sharedWritebackConfirmMessage(link) {
+    return `这是复制出来的图表，仍与原图共享 ${sharedWritebackAddress(link)}。继续会把面板数据写回该区域，并同步影响原图。`;
+  }
+
   async function resolveForDecision(link, resolveLink) {
     if (!link || typeof link === "string" || link.kind === "legacy-address") return clone(link);
     if (link.kind !== "workbook-name") return clone(link);
@@ -201,5 +226,6 @@
 
   return Object.freeze({
     dataChanged, countOtherChartsSharingAddress, createPanelConfirmation, runForkOnSave, executeUpdate,
+    sharedWritebackConfirmMessage,
   });
 }));
